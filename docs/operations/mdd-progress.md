@@ -1906,3 +1906,64 @@ Passed:
 5. Are we still helping local business owners understand why their website may not generate leads?
 
    Yes. The staging system now passes the two-generation readiness gate while preserving evidence quality and plain-English report behavior.
+
+## 2026-06-09 Generation 33 Production PageSpeed Runtime Secret Validation
+
+Mission reviewed: Phase 1 complete vertical slice with branch-aligned Cloudflare deployment, truthful external dependency reporting, evidence sufficiency, and score explainability.
+
+Phase goal reviewed: production deployment from `main` and staging deployment from `staging`, with runtime behavior validated before founder review.
+
+### Fresh BDD Scenarios
+
+- Critical: The GitHub remote is under the North Valley Intelligence organization.
+- Critical: `staging` is the source branch for `staging-assessment.northvalleyintel.com`.
+- Critical: `main` is the source branch for `assessment.northvalleyintel.com`.
+- Critical: Production scan submission returns a trackable pending job.
+- Critical: Production scan status reaches a truthful terminal state.
+- Critical: Production reads `PAGESPEED_API_KEY` from the Cloudflare Worker secret binding.
+- Critical: A customer report must not say PageSpeed has no API key when the production secret is configured.
+- High: Automated gates pass before deploy.
+- High: Cloudflare/OpenNext build passes with only documented warnings.
+- High: MDE status/history record the failure, fix, and remaining validation risk.
+
+### Verification Result
+
+Failed then fixed locally:
+
+- Production Medina Clean scan `medinaclean-com-1780978780839` completed with 11 crawled pages and high evidence confidence.
+- The same report incorrectly said `PageSpeed was skipped because no API key is configured`.
+- Root cause: the scan route read Cloudflare context again inside the asynchronous assessment runner after D1 work had already started. D1 remained available, but the PageSpeed secret was not reliably available at that later point.
+- Fix: capture the Cloudflare runtime context at queue time, resolve the PageSpeed key immediately, and pass the resolved runtime configuration into the background assessment runner.
+- Regression coverage: added `apps/web/src/app/api/scans/route.test.ts` to verify Cloudflare Worker secret resolution, local env precedence, and missing-key behavior.
+
+Passed locally after fix:
+
+- `npm run format`
+- `npm run lint`
+- `npm run typecheck`
+- `npm run test` with 38 unit tests
+- `npm run test:integration` with 6 integration tests
+- `npm run build`
+- `npm run cf:build`
+
+### Goal Drift Review
+
+1. What supports the mission?
+
+   The fix prevents a customer-facing report from hiding a configured dependency failure behind an inaccurate missing-key explanation.
+
+2. What is missing?
+
+   Branch-aligned staging and production redeploys plus post-fix production self-QA are still required.
+
+3. What is over-engineered?
+
+   Nothing material. Capturing runtime configuration at queue time is simpler and more reliable than repeatedly reading request-scoped context.
+
+4. What was deferred?
+
+   Dedicated background queues, scheduled scans, authenticated API consumers, PDF/shareable report features, and full production maturity work.
+
+5. Are we still helping local business owners understand why their website may not generate leads?
+
+   Yes, with a stricter requirement that external measurement status must be truthful and reproducible.

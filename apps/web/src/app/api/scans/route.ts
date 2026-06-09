@@ -25,6 +25,11 @@ type CloudflareRuntimeContext = {
   env?: { PAGESPEED_API_KEY?: string };
 };
 
+type AssessmentRuntime = {
+  isCloudflare: boolean;
+  pagespeedApiKey?: string;
+};
+
 export async function GET() {
   return NextResponse.json({ scans: await listAssessmentJobs() });
 }
@@ -83,8 +88,12 @@ function queueAssessment(id: string, url: string, createdAt: Date): void {
   if (runningJobs.has(id)) return;
   runningJobs.add(id);
 
-  const work = runAssessment(id, url, createdAt);
   const cloudflareContext = getOptionalCloudflareContext();
+  const runtime: AssessmentRuntime = {
+    isCloudflare: Boolean(cloudflareContext),
+    pagespeedApiKey: resolvePageSpeedApiKey(cloudflareContext)
+  };
+  const work = runAssessment(id, url, createdAt, runtime);
 
   if (cloudflareContext) {
     cloudflareContext.ctx.waitUntil(work);
@@ -96,26 +105,27 @@ function queueAssessment(id: string, url: string, createdAt: Date): void {
   }, 0);
 }
 
-async function runAssessment(id: string, url: string, createdAt: Date): Promise<void> {
+async function runAssessment(
+  id: string,
+  url: string,
+  createdAt: Date,
+  runtime: AssessmentRuntime
+): Promise<void> {
   await markAssessmentRunning(id);
   try {
-    const cloudflareContext = getOptionalCloudflareContext();
-    const pagespeedApiKey =
-      process.env.PAGESPEED_API_KEY ||
-      cloudflareContext?.env?.PAGESPEED_API_KEY ||
-      undefined;
+    const pagespeedApiKey = runtime.pagespeedApiKey;
     const assessment = assessWebsite(
       { url },
       {
         pagespeedApiKey,
         pageSpeedAdapter: pagespeedApiKey ? googlePageSpeedAdapter : undefined,
-        pageSpeedTimeoutMs: cloudflareContext
+        pageSpeedTimeoutMs: runtime.isCloudflare
           ? cloudflarePageSpeedTimeoutMs
           : undefined,
         now: () => createdAt
       }
     );
-    const report = cloudflareContext
+    const report = runtime.isCloudflare
       ? await withTimeout(
           assessment,
           cloudflareExecutionTimeoutMs,
@@ -148,6 +158,16 @@ function getOptionalCloudflareContext(): CloudflareRuntimeContext | null {
   } catch {
     return null;
   }
+}
+
+export function resolvePageSpeedApiKey(
+  cloudflareContext: Pick<CloudflareRuntimeContext, "env"> | null
+): string | undefined {
+  return (
+    process.env.PAGESPEED_API_KEY ||
+    cloudflareContext?.env?.PAGESPEED_API_KEY ||
+    undefined
+  );
 }
 
 async function withTimeout<T>(

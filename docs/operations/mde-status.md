@@ -1158,18 +1158,18 @@ Generation 28: second clean no-negative-finding-without-evidence verification.
 
 ## Current Phase Readiness
 
-Phase 1 local implementation is ready after Generation 18. The competitive validation strategy gate was added in Generation 17, then Generation 18 passed with no implementation changes between clean passes.
+Phase 1 staging readiness passed after Generation 32. Production deployment was attempted from the branch-aligned `main` path, but Generation 33 found a Critical production runtime validation failure: the production Worker had a PageSpeed secret configured, yet a live Medina Clean report still said PageSpeed was skipped because no API key was configured.
+
+The Generation 33 fix captures the Cloudflare runtime environment when the assessment is queued and passes the PageSpeed key into the background assessment runner. Local automated validation now passes, but Phase 1 production readiness is not restored until the fix is committed, deployed from `main`, and post-fix production self-QA confirms PageSpeed is no longer reported as missing when the secret is configured.
 
 The Turbopack tracing warning from the filesystem-backed scan store is classified as an acceptable Phase 1 implementation risk only under the documented conditions above. This classification does not make the build production-ready.
 
-Staging deployment has not been run. Production remains blocked until staging succeeds, production is explicitly approved, and filesystem-backed local scan storage is replaced with a proper persistent store or otherwise removed from the production runtime.
-
 ## Blockers
 
-- Staging deployment not executed.
-- Production deployment not approved.
-- Filesystem-backed local scan storage must be replaced before production readiness.
-- Staging and production PageSpeed secrets still need deployment-environment validation later.
+- Generation 33 deployment and post-fix production self-QA are still pending.
+- Production PageSpeed runtime behavior must be revalidated after deploying the queued-runtime fix.
+- Filesystem-backed local scan storage must be replaced before full production maturity, even though deployed Cloudflare environments now use D1.
+- The mistaken personal repository `ferosh-northvalley/local-website-growth-assessment` still exists from the earlier setup attempt and should only be deleted with explicit founder approval.
 
 ## Goal Drift Review
 

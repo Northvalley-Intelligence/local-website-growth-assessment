@@ -1666,3 +1666,63 @@ Two-Pass Verification:
 - Generation B result: Generation 32 passed with no implementation changes.
 - Code changed between passes: no implementation changes.
 - Readiness achieved: yes for staging-ready Phase 1; production remains blocked until production-specific storage, secrets, route/DNS, deploy, and self-QA pass.
+
+## Generation 33: Production PageSpeed Runtime Secret Validation
+
+Mission Version: Phase 1 complete vertical slice with Cloudflare staging and production runtime validation, evidence sufficiency, score explainability, and truthful external dependency reporting.
+
+Phase Goal Version: Complete vertical slice deployed from branch-aligned Cloudflare Workers with submit, status, history, insufficient-evidence, completed-report, and PageSpeed dependency behavior validated end to end.
+
+BDD Summary:
+
+- Critical count: 7
+- High count: 6
+- Low count: 0
+
+BDD Changes:
+
+- New scenarios: production must be deployed from `main`; staging must be deployed from `staging`; the GitHub remote must live under the North Valley Intelligence organization; production must read `PAGESPEED_API_KEY` from the Cloudflare Worker secret binding; unavailable PageSpeed must be caused by measurement failure or timeout rather than a missing configured secret.
+- Removed scenarios: none.
+- Modified scenarios: production readiness now includes branch provenance and production runtime dependency validation.
+
+Test Summary:
+
+- Reused tests: format, lint, typecheck, unit tests, integration tests, normal build, Cloudflare/OpenNext build, production API self-QA.
+- New tests: `apps/web/src/app/api/scans/route.test.ts` verifies Cloudflare Worker PageSpeed secret resolution, local env precedence, and honest unavailable behavior when no key exists.
+- Removed tests: none.
+
+Implementation Summary:
+
+- Files changed: scan API route, scan route test, MDE telemetry docs.
+- Components changed: scan queue runtime configuration.
+- Architectural changes: the PageSpeed API key is captured from the Cloudflare context at queue time and passed into the background assessment runner. This avoids depending on request-scoped Cloudflare context after asynchronous D1 work has already started.
+
+Outcome: failed then fixed locally; deployment and production self-QA pending after commit.
+
+Failure Reasons:
+
+- Critical failures found: production was configured with a PageSpeed secret, but a live Medina Clean scan still reported `PageSpeed was skipped because no API key is configured`.
+- High failures found: the previous test suite did not cover Cloudflare Worker secret resolution for the scan route.
+
+Self-QA Results:
+
+- Scenarios executed: production scan status inspection for `medinaclean-com-1780978780839`, local regression tests, format, lint, typecheck, integration tests, normal build, Cloudflare/OpenNext build.
+- Actual results observed: production completed a Medina Clean report with 11 crawled pages and high evidence confidence, but Performance remained unavailable with the wrong explanation: no API key configured.
+- Issues found: D1 access worked in production, but PageSpeed secret access did not survive the asynchronous route-to-background handoff.
+- Fixes made: captured Cloudflare runtime configuration before `waitUntil`, passed `pagespeedApiKey` and `isCloudflare` into `runAssessment`, and added regression tests for secret resolution.
+- Remaining risks: production deployment and post-fix live PageSpeed self-QA must still run from the branch-aligned repository.
+
+Founder Inputs:
+
+- Decisions requested: none.
+- Credentials requested: none; the production PageSpeed secret is already configured and must not be printed.
+- Mission updates requested: none.
+
+Readiness: fail until deployment and post-fix production self-QA pass.
+
+Two-Pass Verification:
+
+- Generation A result: Generation 33 failed, then local automated gates passed after the fix.
+- Generation B result: pending after branch-aligned staging and production deploys.
+- Code changed between passes: yes.
+- Readiness achieved: no.
