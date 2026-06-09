@@ -1165,12 +1165,11 @@ The Generation 33 fix captures the Cloudflare runtime environment when the asses
 Current deployment status:
 
 - Repository: `https://github.com/Northvalley-Intelligence/local-website-growth-assessment`
-- Staging branch/source: `staging@2f9b0ef`
-- Production branch/source: `main@2f9b0ef`
+- Staging branch/source: current `staging` branch tip
+- Production branch/source: current `main` branch tip
 - Staging URL: `https://staging-assessment.northvalleyintel.com`
 - Production URL: `https://assessment.northvalleyintel.com`
-- Staging Worker version: `fa9faa2a-c070-4fef-9888-bd8e1d1403d9`
-- Production Worker version: `01dedb43-614f-469f-b7aa-084e80ab0cca`
+- Cloudflare Worker version IDs are intentionally not used as the durable readiness marker because each docs-only redeploy creates a new version. Branch commit, deployment command, URL response, and production scan output are the readiness evidence.
 - Latest production validation scan: `medinaclean-com-1780979601058`
 - Latest production validation result: completed, 11 pages crawled, high evidence confidence, Performance unavailable because PageSpeed could not be reached, not because the API key was missing.
 
