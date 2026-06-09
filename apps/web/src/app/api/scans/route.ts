@@ -20,6 +20,11 @@ const runningJobs = new Set<string>();
 const cloudflareExecutionTimeoutMs = 25000;
 const cloudflarePageSpeedTimeoutMs = 5000;
 
+type CloudflareRuntimeContext = {
+  ctx: { waitUntil(promise: Promise<unknown>): void };
+  env?: { PAGESPEED_API_KEY?: string };
+};
+
 export async function GET() {
   return NextResponse.json({ scans: await listAssessmentJobs() });
 }
@@ -94,8 +99,11 @@ function queueAssessment(id: string, url: string, createdAt: Date): void {
 async function runAssessment(id: string, url: string, createdAt: Date): Promise<void> {
   await markAssessmentRunning(id);
   try {
-    const pagespeedApiKey = process.env.PAGESPEED_API_KEY || undefined;
     const cloudflareContext = getOptionalCloudflareContext();
+    const pagespeedApiKey =
+      process.env.PAGESPEED_API_KEY ||
+      cloudflareContext?.env?.PAGESPEED_API_KEY ||
+      undefined;
     const assessment = assessWebsite(
       { url },
       {
@@ -134,13 +142,9 @@ function stableScanId(domain: string, createdAt: Date): string {
   return `${domain.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${createdAt.getTime()}`;
 }
 
-function getOptionalCloudflareContext(): {
-  ctx: { waitUntil(promise: Promise<unknown>): void };
-} | null {
+function getOptionalCloudflareContext(): CloudflareRuntimeContext | null {
   try {
-    return getCloudflareContext() as {
-      ctx: { waitUntil(promise: Promise<unknown>): void };
-    };
+    return getCloudflareContext() as CloudflareRuntimeContext;
   } catch {
     return null;
   }
