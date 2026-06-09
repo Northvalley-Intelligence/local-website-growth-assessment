@@ -1726,3 +1726,123 @@ Two-Pass Verification:
 - Generation B result: pending after branch-aligned staging and production deploys.
 - Code changed between passes: yes.
 - Readiness achieved: no.
+
+## Generation 34: Branch-Aligned Staging And Production Redeploy
+
+Mission Version: same as Generation 33.
+
+Phase Goal Version: same as Generation 33.
+
+BDD Summary:
+
+- Critical count: 7
+- High count: 6
+- Low count: 0
+
+BDD Changes:
+
+- New scenarios: staging and production must both deploy from their designated branches at the same commit; Worker secrets must be present without exposing values; PageSpeed unavailability must not be misreported as a missing API key when the secret is configured.
+- Removed scenarios: none.
+- Modified scenarios: production readiness now includes safe secret-value normalization because the local `.env` value included shell quotes.
+
+Test Summary:
+
+- Reused tests: format, lint, typecheck, unit tests, integration tests, normal build, Cloudflare/OpenNext build, staging API self-QA, production API self-QA.
+- New tests: none beyond Generation 33.
+- Removed tests: none.
+
+Implementation Summary:
+
+- Files changed: none after the Generation 33 commit.
+- Components changed: deployment environment secrets.
+- Architectural changes: none.
+
+Outcome: passed after environment correction; requires second clean generation.
+
+Failure Reasons:
+
+- Critical failures found: the first post-deploy production scan still reported PageSpeed as missing because the production secret value needed to be re-uploaded from the local `.env` value with surrounding quotes stripped.
+- High failures found: none after the secret correction.
+
+Self-QA Results:
+
+- Scenarios executed: staging deploy from `staging@2f9b0ef`, staging Medina Clean scan, production deploy from `main@2f9b0ef`, production homepage check, production Medina Clean scan before and after secret correction.
+- Actual results observed: staging completed Medina Clean with 11 pages and PageSpeed `failed` instead of missing key; production version `01dedb43-614f-469f-b7aa-084e80ab0cca` initially completed Medina Clean with the old missing-key message, then after secret re-upload completed Medina Clean with 11 pages, high evidence confidence, and PageSpeed `failed` instead of missing key.
+- Issues found: local `.env` quoting could produce an invalid or ineffective Worker secret value if uploaded directly.
+- Fixes made: re-uploaded staging and production `PAGESPEED_API_KEY` secrets after stripping surrounding quotes. Secret values were not intentionally printed in the record.
+- Remaining risks: PageSpeed can still time out or fail within the Worker runtime budget, so Performance remains honest but unavailable in these validation runs.
+
+Founder Inputs:
+
+- Decisions requested: none.
+- Credentials requested: none.
+- Mission updates requested: none.
+
+Readiness: pass for Generation 34, pending second clean generation.
+
+Two-Pass Verification:
+
+- Generation A result: Generation 34 passed after environment secret correction.
+- Generation B result: pending.
+- Code changed between passes: no code changes after the Generation 33 commit; environment secret value changed during Generation 34.
+- Readiness achieved: no.
+
+## Generation 35: Second Clean Production Verification
+
+Mission Version: same as Generation 34.
+
+Phase Goal Version: same as Generation 34.
+
+BDD Summary:
+
+- Critical count: 7
+- High count: 6
+- Low count: 0
+
+BDD Changes:
+
+- New scenarios: fresh verification that the deployed production scan remains truthful with no code or environment changes after Generation 34.
+- Removed scenarios: none.
+- Modified scenarios: none.
+
+Test Summary:
+
+- Reused tests: format, lint, typecheck, 38 unit tests, 6 integration tests, normal build, Cloudflare/OpenNext build, production API summary inspection.
+- New tests: none.
+- Removed tests: none.
+
+Implementation Summary:
+
+- Files changed: no implementation files changed between Generation 34 and Generation 35.
+- Components changed: none.
+- Architectural changes: none.
+
+Outcome: passed.
+
+Failure Reasons:
+
+- Critical failures: none.
+- High failures: none.
+
+Self-QA Results:
+
+- Scenarios executed: format, lint, typecheck, unit tests, integration tests, normal build, Cloudflare/OpenNext build, production scan summary inspection.
+- Actual results observed: production scan `medinaclean-com-1780979601058` remained `completed`, crawled 11 pages, evidence confidence was `high`, Performance was `unavailable`, and PageSpeed status was `failed` with the explanation `PageSpeed could not be reached, so the report does not make a performance claim from that API`.
+- Issues found: none.
+- Fixes made: none.
+- Remaining risks: PageSpeed availability remains dependent on the external API and Worker runtime budget; the app handles that by not fabricating a performance score.
+
+Founder Inputs:
+
+- Decisions requested: none.
+- Credentials requested: none.
+- Mission updates requested: none.
+
+Readiness: pass for Phase 1 staging and production runtime readiness with documented Phase 1 limitations.
+
+Two-Pass Verification:
+
+- Generation A result: Generation 34 passed after environment correction.
+- Generation B result: Generation 35 passed with no code or environment changes.
+- Code changed between passes: no.
+- Readiness achieved: yes for Phase 1 runtime readiness; Phase 2 should replace or formalize long-running background execution and persistent production storage maturity.

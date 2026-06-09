@@ -1967,3 +1967,66 @@ Passed locally after fix:
 5. Are we still helping local business owners understand why their website may not generate leads?
 
    Yes, with a stricter requirement that external measurement status must be truthful and reproducible.
+
+## 2026-06-09 Generation 34/35 Production Runtime Readiness
+
+Mission reviewed: Phase 1 complete vertical slice with branch-aligned staging/production deployment, truthful dependency reporting, evidence sufficiency, score explainability, and self-QA before founder review.
+
+Phase goal reviewed: make the deployed staging and production systems usable for founder testing.
+
+### Fresh BDD Scenarios
+
+- Critical: Staging deploys from the `staging` branch.
+- Critical: Production deploys from the `main` branch.
+- Critical: Production accepts a bare business domain and creates a pending scan.
+- Critical: Production reaches a truthful completed or insufficient-evidence terminal state.
+- Critical: Production report does not appear when evidence is insufficient.
+- Critical: Production report includes evidence-backed category findings when evidence is sufficient.
+- Critical: Production PageSpeed behavior does not claim the API key is missing when the Worker secret is configured.
+- High: Automated gates pass.
+- High: Cloudflare/OpenNext build passes with only documented warnings.
+- High: Production homepage responds.
+- High: MDE status prominently records missing dependencies, known risks, validation results, and branch provenance.
+
+### Verification Result
+
+Passed after Generation 34 environment correction and Generation 35 second clean verification:
+
+- `staging` fast-forwarded to `main@2f9b0ef` and pushed.
+- Staging deployed from `staging@2f9b0ef`, Worker version `fa9faa2a-c070-4fef-9888-bd8e1d1403d9`.
+- Staging Medina Clean scan completed with 11 pages, high evidence confidence, and PageSpeed `failed` rather than missing key.
+- Production deployed from `main@2f9b0ef`, Worker version `01dedb43-614f-469f-b7aa-084e80ab0cca`.
+- Production homepage returned HTTP 200.
+- Production Medina Clean scan `medinaclean-com-1780979493462` initially still reported the missing-key message.
+- Production and staging PageSpeed secrets were re-uploaded after stripping surrounding quotes from the local `.env` value.
+- Production Medina Clean scan `medinaclean-com-1780979601058` completed with 11 pages, high evidence confidence, Performance unavailable, and PageSpeed `failed` with the explanation that PageSpeed could not be reached.
+- Second clean Generation 35 verification passed format, lint, typecheck, 38 unit tests, 6 integration tests, normal build, Cloudflare/OpenNext build, and production scan summary inspection with no code or environment changes.
+
+### Known Risks
+
+- PageSpeed can still fail or time out in the Worker runtime. The system handles this by marking Performance unavailable and not fabricating a score.
+- The Turbopack tracing warning remains documented and acceptable for Phase 1 only.
+- Dedicated background execution is still needed for stronger production reliability.
+- Authenticated API consumers, scheduled scans, report downloads, and shareable report URLs are Phase 2+ work.
+
+### Goal Drift Review
+
+1. What supports the mission?
+
+   The deployed product now creates asynchronous scans, stores them in D1, crawls safely, blocks low-evidence reports, and produces evidence-backed customer-facing reports in staging and production.
+
+2. What is missing?
+
+   Phase 2 should add authenticated access patterns, report download/share features, stronger background execution, and production storage/observability hardening.
+
+3. What is over-engineered?
+
+   Nothing material for the current deployment. D1 plus Worker `waitUntil` is sufficient for this Phase 1 vertical slice, while the limitations are explicitly documented.
+
+4. What was deferred?
+
+   PDF export, shareable report URLs, consultation CTA, scheduled scans, external analytics connectors, durable queue/worker architecture, and deleting the mistaken personal GitHub repository pending founder approval.
+
+5. Are we still helping local business owners understand why their website may not generate leads?
+
+   Yes. Phase 1 is now deployed and self-validated around the core mission: safe public crawl, evidence sufficiency, traceable scoring, and business-readable recommendations.

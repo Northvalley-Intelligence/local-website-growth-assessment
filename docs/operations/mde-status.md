@@ -1158,17 +1158,30 @@ Generation 28: second clean no-negative-finding-without-evidence verification.
 
 ## Current Phase Readiness
 
-Phase 1 staging readiness passed after Generation 32. Production deployment was attempted from the branch-aligned `main` path, but Generation 33 found a Critical production runtime validation failure: the production Worker had a PageSpeed secret configured, yet a live Medina Clean report still said PageSpeed was skipped because no API key was configured.
+Phase 1 staging readiness passed after Generation 32. Generation 33 found a Critical production runtime validation failure: the production Worker had a PageSpeed secret configured, yet a live Medina Clean report still said PageSpeed was skipped because no API key was configured.
 
-The Generation 33 fix captures the Cloudflare runtime environment when the assessment is queued and passes the PageSpeed key into the background assessment runner. Local automated validation now passes, but Phase 1 production readiness is not restored until the fix is committed, deployed from `main`, and post-fix production self-QA confirms PageSpeed is no longer reported as missing when the secret is configured.
+The Generation 33 fix captures the Cloudflare runtime environment when the assessment is queued and passes the PageSpeed key into the background assessment runner. Generation 34 deployed the fix from branch-aligned sources and corrected the Worker secret value by stripping local `.env` quotes before upload. Generation 35 passed as the second clean production verification with no code or environment changes.
+
+Current deployment status:
+
+- Repository: `https://github.com/Northvalley-Intelligence/local-website-growth-assessment`
+- Staging branch/source: `staging@2f9b0ef`
+- Production branch/source: `main@2f9b0ef`
+- Staging URL: `https://staging-assessment.northvalleyintel.com`
+- Production URL: `https://assessment.northvalleyintel.com`
+- Staging Worker version: `fa9faa2a-c070-4fef-9888-bd8e1d1403d9`
+- Production Worker version: `01dedb43-614f-469f-b7aa-084e80ab0cca`
+- Latest production validation scan: `medinaclean-com-1780979601058`
+- Latest production validation result: completed, 11 pages crawled, high evidence confidence, Performance unavailable because PageSpeed could not be reached, not because the API key was missing.
 
 The Turbopack tracing warning from the filesystem-backed scan store is classified as an acceptable Phase 1 implementation risk only under the documented conditions above. This classification does not make the build production-ready.
 
 ## Blockers
 
-- Generation 33 deployment and post-fix production self-QA are still pending.
-- Production PageSpeed runtime behavior must be revalidated after deploying the queued-runtime fix.
-- Filesystem-backed local scan storage must be replaced before full production maturity, even though deployed Cloudflare environments now use D1.
+- No unresolved Critical or High Phase 1 runtime blockers remain after Generation 35.
+- Filesystem-backed local scan storage must be replaced or isolated before full production maturity, even though deployed Cloudflare environments now use D1.
+- Dedicated background execution is still needed for production-grade long-running scan reliability.
+- Authenticated API access, scheduled scans, report download, and shareable report URLs remain Phase 2+ work.
 - The mistaken personal repository `ferosh-northvalley/local-website-growth-assessment` still exists from the earlier setup attempt and should only be deleted with explicit founder approval.
 
 ## Goal Drift Review
