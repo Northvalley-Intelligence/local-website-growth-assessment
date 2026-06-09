@@ -1,0 +1,32 @@
+{
+  "risks": [
+    {
+      "id": "R-001",
+      "severity": "High",
+      "status": "accepted_phase_1",
+      "risk": "PageSpeed may fail or time out in Cloudflare Worker runtime.",
+      "mitigation": "Mark Performance unavailable and do not fabricate a score."
+    },
+    {
+      "id": "R-002",
+      "severity": "High",
+      "status": "phase_2",
+      "risk": "Worker waitUntil is not a full dedicated background execution architecture.",
+      "mitigation": "Add durable queue/background worker model in Phase 2 or production hardening."
+    },
+    {
+      "id": "R-003",
+      "severity": "Medium",
+      "status": "accepted_phase_1",
+      "risk": "Turbopack tracing warning exists because local development still has filesystem-backed scan store code.",
+      "mitigation": "Cloudflare environments use D1; keep warning documented and remove or isolate filesystem store later."
+    },
+    {
+      "id": "R-004",
+      "severity": "Low",
+      "status": "founder_decision",
+      "risk": "Mistaken personal GitHub repository still exists.",
+      "mitigation": "Delete only with explicit founder approval."
+    }
+  ]
+}

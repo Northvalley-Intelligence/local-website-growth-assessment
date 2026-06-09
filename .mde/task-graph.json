@@ -1,0 +1,29 @@
+{
+  "nodes": [
+    {
+      "id": "phase-1-founder-review",
+      "status": "ready",
+      "summary": "Founder tests deployed Phase 1 staging/production experience."
+    },
+    {
+      "id": "phase-2-api-hardening",
+      "status": "next",
+      "summary": "Design authenticated scan API, scan scheduling, report viewing, and report download/share flows."
+    },
+    {
+      "id": "phase-2-background-execution",
+      "status": "next",
+      "summary": "Move long-running assessments to a durable background execution model."
+    }
+  ],
+  "edges": [
+    {
+      "from": "phase-1-founder-review",
+      "to": "phase-2-api-hardening"
+    },
+    {
+      "from": "phase-1-founder-review",
+      "to": "phase-2-background-execution"
+    }
+  ]
+}

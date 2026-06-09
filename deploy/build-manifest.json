@@ -1,0 +1,22 @@
+{
+  "app": "local-website-growth-assessment",
+  "platform": "Cloudflare Workers via OpenNext",
+  "staging": {
+    "branch": "staging",
+    "url": "https://staging-assessment.northvalleyintel.com",
+    "worker": "northvalley-assessment-staging",
+    "database": "northvalley-assessment-staging"
+  },
+  "production": {
+    "branch": "main",
+    "url": "https://assessment.northvalleyintel.com",
+    "worker": "northvalley-assessment-production",
+    "database": "northvalley-assessment-production"
+  },
+  "commands": {
+    "build": "npm run build",
+    "cloudflareBuild": "npm run cf:build",
+    "deployStaging": "npm run cf:deploy:staging",
+    "deployProduction": "npm run cf:deploy:production"
+  }
+}

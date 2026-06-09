@@ -1,0 +1,12 @@
+{
+  "required": {
+    "production": ["ASSESSMENT_DB", "PAGESPEED_API_KEY"],
+    "staging": ["ASSESSMENT_DB", "PAGESPEED_API_KEY"],
+    "local": ["PAGESPEED_API_KEY"]
+  },
+  "notes": [
+    "Do not commit secret values.",
+    "Strip local .env shell quotes before uploading Worker secrets.",
+    "PageSpeed may still be unavailable at runtime and must be reported honestly."
+  ]
+}

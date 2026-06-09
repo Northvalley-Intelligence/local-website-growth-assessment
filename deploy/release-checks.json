@@ -1,0 +1,23 @@
+{
+  "requiredChecks": [
+    "format",
+    "lint",
+    "typecheck",
+    "unit_tests",
+    "integration_tests",
+    "build",
+    "cloudflare_build",
+    "staging_self_qa",
+    "production_self_qa"
+  ],
+  "phaseGate": {
+    "twoPassVerification": true,
+    "selfQaRequired": true,
+    "noUnresolvedCritical": true,
+    "noUnresolvedHigh": true
+  },
+  "knownWarnings": [
+    "Turbopack tracing warning from local filesystem-backed scan store.",
+    "OpenNext generated bundle warning about ../../tsconfig.base.json."
+  ]
+}

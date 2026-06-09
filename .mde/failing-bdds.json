@@ -1,0 +1,11 @@
+{
+  "currentGeneration": 35,
+  "unresolvedCritical": [],
+  "unresolvedHigh": [],
+  "deferredLow": [
+    {
+      "id": "P2-L01",
+      "reason": "Screenshot-based visual QA is valuable but not required for Phase 1 readiness."
+    }
+  ]
+}

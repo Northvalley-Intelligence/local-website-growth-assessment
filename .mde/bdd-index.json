@@ -1,0 +1,73 @@
+{
+  "currentGeneration": 35,
+  "criticalCount": 7,
+  "highCount": 6,
+  "lowCount": 0,
+  "activeScenarios": [
+    {
+      "id": "P1-C01",
+      "priority": "Critical",
+      "scenario": "Submitting a normal business domain creates a trackable asynchronous assessment."
+    },
+    {
+      "id": "P1-C02",
+      "priority": "Critical",
+      "scenario": "Crawler respects public-only, same-domain, robots.txt, max-page, and max-depth limits."
+    },
+    {
+      "id": "P1-C03",
+      "priority": "Critical",
+      "scenario": "No report is shown when public evidence is insufficient."
+    },
+    {
+      "id": "P1-C04",
+      "priority": "Critical",
+      "scenario": "Reports connect scores to found evidence, missing evidence, business impact, and recommended actions."
+    },
+    {
+      "id": "P1-C05",
+      "priority": "Critical",
+      "scenario": "Customer-facing reports show what was found before what is missing or recommended."
+    },
+    {
+      "id": "P1-C06",
+      "priority": "Critical",
+      "scenario": "Production and staging deploy only from their designated branches."
+    },
+    {
+      "id": "P1-C07",
+      "priority": "Critical",
+      "scenario": "PageSpeed failures are reported honestly without inventing performance evidence."
+    },
+    {
+      "id": "P1-H01",
+      "priority": "High",
+      "scenario": "Automated gates pass: format, lint, typecheck, unit tests, integration tests, build, and Cloudflare build."
+    },
+    {
+      "id": "P1-H02",
+      "priority": "High",
+      "scenario": "Reports are decision-oriented and understandable within about one minute."
+    },
+    {
+      "id": "P1-H03",
+      "priority": "High",
+      "scenario": "Validation strategy covers every scoring category."
+    },
+    {
+      "id": "P1-H04",
+      "priority": "High",
+      "scenario": "Known risks and missing inputs are surfaced in MDE status."
+    },
+    {
+      "id": "P1-H05",
+      "priority": "High",
+      "scenario": "Self-QA inspects actual API/UI output before founder review."
+    },
+    {
+      "id": "P1-H06",
+      "priority": "High",
+      "scenario": "Two consecutive clean generations pass before phase readiness is claimed."
+    }
+  ]
+}

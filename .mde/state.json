@@ -1,0 +1,28 @@
+{
+  "project": "Local Website Growth Assessment",
+  "organization": "North Valley Intel",
+  "currentPhase": "Phase 1",
+  "currentPhaseGoal": "Complete vertical slice: URL input to safe public crawl to signal extraction to scoring to report page.",
+  "phaseReadiness": "ready_for_founder_testing",
+  "currentGeneration": 35,
+  "missionVersion": "2026-06-09-human-agent-deploy-artifact-split",
+  "phaseGoalVersion": "phase-1-complete-vertical-slice",
+  "branches": {
+    "staging": {
+      "branch": "staging",
+      "url": "https://staging-assessment.northvalleyintel.com"
+    },
+    "production": {
+      "branch": "main",
+      "url": "https://assessment.northvalleyintel.com"
+    }
+  },
+  "lastValidated": "2026-06-09",
+  "requiredSessionInputs": [
+    "Read MISSION.md",
+    "Read .mde/state.json",
+    "Read .mde/failing-bdds.json",
+    "Generate fresh BDDs before implementation",
+    "Update human, agent, and deploy artifacts as appropriate"
+  ]
+}
