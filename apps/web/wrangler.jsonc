@@ -1,0 +1,27 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "northvalley-assessment-staging",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-06-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "pattern": "staging-assessment.northvalleyintel.com/*",
+      "zone_name": "northvalleyintel.com"
+    }
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "ASSESSMENT_DB",
+      "database_name": "northvalley-assessment-staging",
+      "database_id": "74b703c3-a0c9-4932-8185-e4c8f3a6e9e1"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

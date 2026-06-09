@@ -1,0 +1,12 @@
+node_modules
+.next
+.open-next
+.wrangler
+dist
+coverage
+.env
+.env.local
+.env.*.local
+*.tsbuildinfo
+
+.vercel
