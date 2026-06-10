@@ -16,5 +16,18 @@
     "latestProductionScan": "medinaclean-com-1780979601058",
     "latestProductionScanResult": "completed with 11 pages, high evidence confidence, PageSpeed failed honestly, Performance unavailable"
   },
-  "recommendation": "founder_review"
+  "recommendation": "founder_review",
+  "currentGeneration": 36,
+  "phaseReadiness": "production_timeout_fix_local_gates_passed_deploy_pending",
+  "latestProductionIssue": "www.kona-ice.com failed because full assessment exceeded Phase 1 Cloudflare runtime watchdog.",
+  "latestLocalValidation": {
+    "format": "passed",
+    "lint": "passed",
+    "typecheck": "passed",
+    "unitTests": "41 passed",
+    "integrationTests": "6 passed",
+    "build": "passed",
+    "cloudflareBuild": "passed with documented warnings"
+  },
+  "nextReportDistributionRequirement": "Phase 2 one-page teaser PDF must state it is not the final report and direct readers to contact@northvalleyintel.com for the complete report and fixing strategy."
 }

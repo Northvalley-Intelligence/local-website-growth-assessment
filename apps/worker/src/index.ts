@@ -54,9 +54,13 @@ export type AssessWebsiteOptions = {
   pageSpeedAdapter?: PageSpeedAdapter;
   pagespeedApiKey?: string;
   now?: () => Date;
+  maxPages?: number;
+  maxCrawlDurationMs?: number;
   crawlDelayMs?: number;
   requestTimeoutMs?: number;
   pageSpeedTimeoutMs?: number;
+  passiveAssetCheckLimit?: number;
+  passiveAssetTimeoutMs?: number;
   maxResponseBytes?: number;
   eventSink?: (event: AssessmentEvent) => void;
 };
@@ -94,6 +98,8 @@ export async function assessWebsite(
   const requestTimeoutMs = options.requestTimeoutMs ?? crawlerPolicy.requestTimeoutMs;
   const maxResponseBytes = options.maxResponseBytes ?? crawlerPolicy.maxResponseBytes;
   const crawl = await crawlWebsite(startedUrl, fetchAdapter, {
+    maxPages: options.maxPages ?? crawlerPolicy.maxPages,
+    maxCrawlDurationMs: options.maxCrawlDurationMs,
     crawlDelayMs: options.crawlDelayMs ?? crawlerPolicy.crawlDelayMs,
     requestTimeoutMs,
     maxResponseBytes,
@@ -109,7 +115,9 @@ export async function assessWebsite(
     pageSpeedTimeoutMs: options.pageSpeedTimeoutMs ?? crawlerPolicy.pageSpeedTimeoutMs
   });
   const signals = await extractSignals(startedUrl, crawl.pages, fetchAdapter, {
-    requestTimeoutMs
+    requestTimeoutMs,
+    passiveAssetCheckLimit: options.passiveAssetCheckLimit,
+    passiveAssetTimeoutMs: options.passiveAssetTimeoutMs
   });
   const categories = scoreSignals(signals, pagespeed, evidenceQuality.reportQuality);
   const overallScore = weightedOverallScore(categories);
@@ -127,7 +135,7 @@ export async function assessWebsite(
     startedUrl: startedUrl.href,
     durationMs: Date.now() - startedAt,
     pagesCrawled: crawl.pages.length,
-    maxPages: crawlerPolicy.maxPages,
+    maxPages: options.maxPages ?? crawlerPolicy.maxPages,
     maxDepth: crawlerPolicy.maxDepth,
     requestTimeoutMs,
     maxResponseBytes,
@@ -180,6 +188,8 @@ export async function crawlWebsite(
   startedUrl: URL,
   fetchAdapter: FetchAdapter,
   options: {
+    maxPages?: number;
+    maxCrawlDurationMs?: number;
     crawlDelayMs: number;
     requestTimeoutMs?: number;
     maxResponseBytes?: number;
@@ -194,6 +204,8 @@ export async function crawlWebsite(
 }> {
   const requestTimeoutMs = options.requestTimeoutMs ?? crawlerPolicy.requestTimeoutMs;
   const maxResponseBytes = options.maxResponseBytes ?? crawlerPolicy.maxResponseBytes;
+  const maxPages = options.maxPages ?? crawlerPolicy.maxPages;
+  const startedAt = Date.now();
   const decisions: CrawlDecision[] = [];
   const adapterFailures: Array<{ url: string; operation: string; message: string }> =
     [];
@@ -210,7 +222,26 @@ export async function crawlWebsite(
   const queue: Array<{ url: URL; depth: number }> = [{ url: startedUrl, depth: 0 }];
   const delayMs = robots.crawlDelayMs ?? options.crawlDelayMs;
 
-  while (queue.length > 0 && pages.length < crawlerPolicy.maxPages) {
+  while (queue.length > 0 && pages.length < maxPages) {
+    if (
+      options.maxCrawlDurationMs &&
+      Date.now() - startedAt >= options.maxCrawlDurationMs
+    ) {
+      for (const queuedItem of queue) {
+        skippedUrls.push({
+          url: queuedItem.url.href,
+          reason: "skipped because the production crawl time budget was reached"
+        });
+        decisions.push({
+          url: queuedItem.url.href,
+          action: "skipped",
+          reason: "production crawl time budget reached",
+          method: "GET"
+        });
+      }
+      break;
+    }
+
     const next = queue.shift();
     if (!next) break;
 
@@ -319,7 +350,7 @@ export async function crawlWebsite(
       if (
         !seen.has(discoveredNormalized) &&
         !queued.has(discoveredNormalized) &&
-        pages.length + queue.length < crawlerPolicy.maxPages
+        pages.length + queue.length < maxPages
       ) {
         queue.push({ url: discovered, depth: next.depth + 1 });
         queued.add(discoveredNormalized);
@@ -334,7 +365,11 @@ export async function extractSignals(
   startedUrl: URL,
   pages: CrawledPage[],
   fetchAdapter: FetchAdapter,
-  options: { requestTimeoutMs?: number } = {}
+  options: {
+    requestTimeoutMs?: number;
+    passiveAssetCheckLimit?: number;
+    passiveAssetTimeoutMs?: number;
+  } = {}
 ): Promise<ExtractedSignals> {
   const allText = pages.map((page) => page.text).join(" ");
   const allHtmlSearchText = pages
@@ -475,7 +510,9 @@ export async function extractSignals(
     https: startedUrl.protocol === "https:",
     faviconFound: allLinks.some((link) => /favicon|icon/i.test(link)),
     openGraphImageFound: pages.some((page) => page.openGraphImageFound),
-    sitemapFound: await sitemapExists(startedUrl, fetchAdapter),
+    sitemapFound: await sitemapExists(startedUrl, fetchAdapter, {
+      requestTimeoutMs: options.requestTimeoutMs
+    }),
     securityHeaders: collectSecurityHeaders(pages)
   };
 }
@@ -1171,6 +1208,15 @@ function evaluateEvidenceQuality(crawl: {
   if (crawl.adapterFailures.length > 0) {
     limitations.push("Some public requests failed during the assessment.");
   }
+  if (
+    crawl.skippedUrls.some((skipped) =>
+      /crawl time budget|production crawl time budget/i.test(skipped.reason)
+    )
+  ) {
+    limitations.push(
+      "The assessment stopped crawling additional pages to stay within the production runtime budget."
+    );
+  }
 
   const confidence: EvidenceQuality["confidence"] =
     limitations.length === 0 ? "high" : totalTextCharacters >= 500 ? "medium" : "low";
@@ -1740,7 +1786,11 @@ async function checkBrokenAssets(
   values: Array<{ value: string; sourcePage: string; label?: string; alt?: string }>,
   fetchAdapter: FetchAdapter,
   kind: "link" | "image",
-  options: { requestTimeoutMs?: number } = {}
+  options: {
+    requestTimeoutMs?: number;
+    passiveAssetCheckLimit?: number;
+    passiveAssetTimeoutMs?: number;
+  } = {}
 ): Promise<ExtractedSignals["brokenLinks"]> {
   const broken: ExtractedSignals["brokenLinks"] = [];
   const candidates = uniqueBy(
@@ -1758,9 +1808,11 @@ async function checkBrokenAssets(
       )
       .filter((candidate) => !privatePathPattern.test(candidate.url.pathname)),
     (candidate) => candidate.url.href
-  ).slice(0, 25);
+  ).slice(0, options.passiveAssetCheckLimit ?? 25);
   const assetTimeoutMs = Math.min(
-    options.requestTimeoutMs ?? crawlerPolicy.requestTimeoutMs,
+    options.passiveAssetTimeoutMs ??
+      options.requestTimeoutMs ??
+      crawlerPolicy.requestTimeoutMs,
     3000
   );
 
@@ -1801,7 +1853,8 @@ async function checkBrokenAssets(
 
 async function sitemapExists(
   startedUrl: URL,
-  fetchAdapter: FetchAdapter
+  fetchAdapter: FetchAdapter,
+  options: { requestTimeoutMs?: number } = {}
 ): Promise<boolean> {
   try {
     const fetched = await safeFetch(
@@ -1809,7 +1862,7 @@ async function sitemapExists(
       new URL("/sitemap.xml", startedUrl.origin).href,
       {
         method: "HEAD",
-        requestTimeoutMs: crawlerPolicy.requestTimeoutMs
+        requestTimeoutMs: options.requestTimeoutMs ?? crawlerPolicy.requestTimeoutMs
       }
     );
     return fetched.response.status < 400;

@@ -1,6 +1,6 @@
 # MDE Status
 
-Last updated: 2026-06-09
+Last updated: 2026-06-10
 
 ## Current Phase
 
@@ -14,7 +14,7 @@ URL input -> safe public crawl -> signal extraction -> scoring -> report page.
 
 ## Current Readiness
 
-Phase 1 is deployed to staging and production for founder testing.
+Phase 1 is deployed to staging and production for founder testing, with a new production runtime fix in progress after a large-site timeout failure.
 
 - Staging: `https://staging-assessment.northvalleyintel.com`
 - Production: `https://assessment.northvalleyintel.com`
@@ -23,12 +23,12 @@ Phase 1 is deployed to staging and production for founder testing.
 
 ## Current BDD State
 
-- Current generation: 35
-- Critical unresolved: 0
+- Current generation: 36
+- Critical unresolved: 0 after local fix; production redeploy/self-QA pending
 - High unresolved: 0
 - Low deferred: 1
-- Two-pass verification: passed
-- Self-QA gate: passed
+- Two-pass verification: pending for the new production timeout fix
+- Self-QA gate: local automated checks passed; production Kona Ice rerun pending
 
 Machine-readable BDD state lives in:
 
@@ -41,18 +41,19 @@ Machine-readable BDD state lives in:
 - Format: passed
 - Lint: passed
 - Typecheck: passed
-- Unit tests: 38 passed
+- Unit tests: 41 passed
 - Integration tests: 6 passed
 - Build: passed
 - Cloudflare build: passed with documented warnings
-- Production homepage: HTTP 200
-- Latest production validation scan: `medinaclean-com-1780979601058`
-- Latest production scan result: completed with 11 pages crawled and high evidence confidence
+- Latest production validation scan before fix: `www.kona-ice.com`
+- Latest production issue: failed because the assessment exceeded the Phase 1 Cloudflare runtime watchdog.
+- Local fix result: production runtime now uses bounded scan limits so large sites can produce partial reports instead of failing solely due scan duration.
 
 ## Known Risks
 
 - PageSpeed can fail or time out in Cloudflare Worker runtime. The report marks Performance unavailable and does not invent a score.
 - Dedicated background execution is still needed for stronger production reliability.
+- Production Phase 1 scans intentionally use a smaller bounded crawl profile than local full-report runs. Large sites may receive partial assessments until Phase 2 background execution is available.
 - Turbopack tracing warning remains documented as acceptable for Phase 1 only.
 - Authenticated API access, scheduled scans, PDF/shareable reports, and consultation CTA are Phase 2+ work.
 - The mistaken personal GitHub repository still exists and should only be deleted with explicit founder approval.
@@ -69,6 +70,7 @@ Founder review of staging or production.
 
 Use Phase 2 for:
 
+- one-page teaser PDF that clearly says it is not the final report and directs readers to `contact@northvalleyintel.com` for the complete report and fixing strategy
 - report sharing/export
 - consultation CTA
 - authenticated API access

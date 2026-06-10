@@ -20,6 +20,8 @@ A passing build with this warning is not a production-ready storage architecture
 
 ## Phase 1 Cloudflare Execution Window
 
-Cloudflare staging can complete typical public assessments, but full 25-page polite crawls plus PageSpeed may approach Worker execution limits. Generation 30 added a terminal execution watchdog so scans fail truthfully instead of remaining `running` forever.
+Cloudflare staging and production founder-testing deployments can complete typical public assessments, but full 25-page polite crawls plus PageSpeed may approach Worker execution limits. Generation 30 added a terminal execution watchdog so scans fail truthfully instead of remaining `running` forever.
 
-This is acceptable for Phase 1 staging only while documented. Production readiness should include a dedicated background execution model, such as a queue/consumer or another approved worker execution architecture, before claiming robust long-running scan support.
+As of Generation 36, Cloudflare production uses a smaller bounded assessment profile than local full-report runs. This is intentional Phase 1 behavior: larger public sites should produce truthful partial reports when enough evidence is collected, rather than failing solely because a full 25-page crawl plus PageSpeed cannot fit inside the Worker runtime budget.
+
+This is acceptable for Phase 1 founder testing only while documented. Production readiness beyond founder testing should include a dedicated background execution model, such as a queue/consumer or another approved worker execution architecture, before claiming robust long-running scan support.

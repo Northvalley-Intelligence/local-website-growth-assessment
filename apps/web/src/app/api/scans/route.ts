@@ -18,7 +18,14 @@ import {
 
 const runningJobs = new Set<string>();
 const cloudflareExecutionTimeoutMs = 25000;
-const cloudflarePageSpeedTimeoutMs = 5000;
+export const cloudflareAssessmentLimits = {
+  maxPages: 8,
+  maxCrawlDurationMs: 14000,
+  requestTimeoutMs: 4000,
+  pageSpeedTimeoutMs: 3000,
+  passiveAssetCheckLimit: 4,
+  passiveAssetTimeoutMs: 1000
+} as const;
 
 type CloudflareRuntimeContext = {
   ctx: { waitUntil(promise: Promise<unknown>): void };
@@ -119,9 +126,7 @@ async function runAssessment(
       {
         pagespeedApiKey,
         pageSpeedAdapter: pagespeedApiKey ? googlePageSpeedAdapter : undefined,
-        pageSpeedTimeoutMs: runtime.isCloudflare
-          ? cloudflarePageSpeedTimeoutMs
-          : undefined,
+        ...(runtime.isCloudflare ? cloudflareAssessmentLimits : {}),
         now: () => createdAt
       }
     );

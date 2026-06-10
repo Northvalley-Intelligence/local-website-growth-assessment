@@ -21,6 +21,8 @@ Phase 1 must respect robots.txt, same-domain boundaries, max 25 pages, max depth
 
 Add branded PDF export, shareable report URL, consultation CTA, and production deployment when gates pass.
 
+The first PDF should include a one-page teaser version generated from the assessment report. It must clearly state that it is not the final report and direct readers to `contact@northvalleyintel.com` for the complete report and fixing strategy.
+
 Phase 2 or any production-readiness effort must replace the Phase 1 filesystem-backed local scan store with a proper persistent store before production can be considered ready.
 
 ## Phase 3: Private Analytics Connectors

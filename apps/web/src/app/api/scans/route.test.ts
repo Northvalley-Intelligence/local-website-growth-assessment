@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolvePageSpeedApiKey } from "./route";
+import { cloudflareAssessmentLimits, resolvePageSpeedApiKey } from "./route";
 
 describe("scan route runtime configuration", () => {
   afterEach(() => {
@@ -34,5 +34,14 @@ describe("scan route runtime configuration", () => {
     vi.stubEnv("PAGESPEED_API_KEY", "");
 
     expect(resolvePageSpeedApiKey(null)).toBeUndefined();
+  });
+
+  it("uses bounded production assessment limits below the Worker watchdog", () => {
+    expect(cloudflareAssessmentLimits.maxPages).toBeLessThan(25);
+    expect(cloudflareAssessmentLimits.maxCrawlDurationMs).toBeLessThan(25000);
+    expect(cloudflareAssessmentLimits.requestTimeoutMs).toBeLessThan(10000);
+    expect(cloudflareAssessmentLimits.pageSpeedTimeoutMs).toBeLessThan(5000);
+    expect(cloudflareAssessmentLimits.passiveAssetCheckLimit).toBeLessThan(25);
+    expect(cloudflareAssessmentLimits.passiveAssetTimeoutMs).toBeLessThan(3000);
   });
 });

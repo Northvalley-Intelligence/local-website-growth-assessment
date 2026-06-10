@@ -120,6 +120,78 @@ describe("Phase 1 assessment pipeline", () => {
     expect(crawl.pages.some((page) => page.url.includes("/deep/"))).toBe(false);
   });
 
+  it("supports a smaller production page budget for large public sites", async () => {
+    const pages: Record<string, string> = {
+      "https://example.com/": `<html><body>
+        ${Array.from({ length: 20 }, (_, index) => `<a href="/city-${index}">city ${index}</a>`).join("")}
+        <p>${"Local service details for homeowners. ".repeat(20)}</p>
+      </body></html>`
+    };
+
+    for (let index = 0; index < 20; index += 1) {
+      pages[`https://example.com/city-${index}`] =
+        `<html><body><p>${"Detailed service-area content. ".repeat(20)}</p></body></html>`;
+    }
+
+    const { fetchAdapter } = mockedSite(pages);
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        maxPages: 4,
+        crawlDelayMs: 0,
+        now: () => new Date("2026-06-10T12:00:00.000Z")
+      }
+    );
+
+    expect(report.crawlMetadata.pagesCrawled).toBe(4);
+    expect(report.crawlMetadata.maxPages).toBe(4);
+    expect(report.evidenceQuality.assessmentStatus).toMatch(/successful|partial/);
+  });
+
+  it("returns a partial report when the crawl time budget stops additional pages", async () => {
+    const pages: Record<string, string> = {
+      "https://example.com/": `<html><body>
+        <a href="/a">a</a>
+        <a href="/b">b</a>
+        <p>${"Local service details for homeowners. ".repeat(20)}</p>
+      </body></html>`,
+      "https://example.com/a": `<html><body><p>${"More service details. ".repeat(20)}</p></body></html>`,
+      "https://example.com/b": `<html><body><p>${"More service details. ".repeat(20)}</p></body></html>`
+    };
+    const { fetchAdapter: baseFetchAdapter } = mockedSite(pages);
+    const fetchAdapter: FetchAdapter = async (url, init) => {
+      if (init?.method !== "HEAD" && !url.endsWith("/robots.txt")) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      return baseFetchAdapter(url, init);
+    };
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        maxPages: 10,
+        maxCrawlDurationMs: 1,
+        crawlDelayMs: 0,
+        now: () => new Date("2026-06-10T12:00:00.000Z")
+      }
+    );
+
+    expect(report.crawlMetadata.pagesCrawled).toBe(1);
+    expect(report.evidenceQuality.assessmentStatus).toBe("partial");
+    expect(report.evidenceQuality.limitations).toContain(
+      "The assessment stopped crawling additional pages to stay within the production runtime budget."
+    );
+    expect(report.crawlMetadata.skippedUrls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: "skipped because the production crawl time budget was reached"
+        })
+      ])
+    );
+  });
+
   it("generates a complete owner-friendly report with evidence and skipped PageSpeed", async () => {
     const { fetchAdapter } = mockedSite(
       {

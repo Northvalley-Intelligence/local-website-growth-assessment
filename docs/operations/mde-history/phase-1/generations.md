@@ -1846,3 +1846,63 @@ Two-Pass Verification:
 - Generation B result: Generation 35 passed with no code or environment changes.
 - Code changed between passes: no.
 - Readiness achieved: yes for Phase 1 runtime readiness; Phase 2 should replace or formalize long-running background execution and persistent production storage maturity.
+
+## Generation 36: Production Large-Site Runtime Fix
+
+Mission Version: Phase 1 complete vertical slice with bounded production execution and truthful partial reports.
+
+Phase Goal Version: same Phase 1 vertical slice, with production founder-testing runtime limits made explicit.
+
+BDD Summary:
+
+- Critical count: 3
+- High count: 2
+- Low count: 1
+
+BDD Changes:
+
+- New Critical scenarios: a large public site should not fail solely because a full 25-page crawl exceeds the Cloudflare runtime budget; a bounded production scan should produce a partial report when enough evidence is collected; PageSpeed must remain optional and must not block non-performance findings.
+- New High scenarios: production route configuration should use a bounded Cloudflare scan profile; timeout messaging should not tell business owners to use a smaller site as the final product answer.
+- New Low scenario: Phase 2 should include a one-page teaser PDF that states it is not the final report and directs readers to `contact@northvalleyintel.com`.
+
+Test Summary:
+
+- Reused tests: worker assessment tests, scan route runtime tests, integration tests, build gates.
+- New tests: worker tests for smaller production page budgets and crawl time-budget partial reports; route test for bounded Cloudflare assessment limits.
+- Removed tests: none.
+
+Implementation Summary:
+
+- Files changed: worker assessment options and crawl behavior, scan API route runtime configuration, worker tests, route tests, known limitations, Phase 2 docs, MDE status/state.
+- Components changed: Cloudflare production scan profile, crawl limit handling, passive asset check limits.
+- Architectural changes: Phase 1 production now uses a bounded Cloudflare assessment profile. Local full-report runs can still use the larger default crawl profile.
+
+Outcome: local gates passed; production deployment and live Kona Ice self-QA pending.
+
+Failure Reasons:
+
+- Critical failure found: `www.kona-ice.com` failed in production because the full assessment exceeded the Phase 1 Cloudflare runtime watchdog.
+- High failure found: the previous production behavior surfaced a timeout failure instead of a useful partial assessment for a large public site.
+
+Self-QA Results:
+
+- Scenarios executed: focused worker and route tests, full format/lint/typecheck/unit/integration gates, normal build, Cloudflare/OpenNext build.
+- Actual results observed: 41 unit tests passed, 6 integration tests passed, normal build passed, Cloudflare build passed with documented Turbopack tracing warning.
+- Issues found: initial typecheck failure because passive asset helper options had an old type annotation; fixed before final gate.
+- Fixes made: added `maxPages`, `maxCrawlDurationMs`, `passiveAssetCheckLimit`, and `passiveAssetTimeoutMs` assessment options; production route now passes a bounded Cloudflare profile; crawl time-budget exhaustion becomes visible in report limitations.
+- Remaining risks: production live self-QA against Kona Ice is still pending; true long-running full reports need Phase 2 background execution or local/manual full-report runs.
+
+Founder Inputs:
+
+- Decisions requested: none for the Phase 1 timeout fix.
+- Credentials requested: none.
+- Mission updates requested: Phase 2 report distribution should include a one-page teaser PDF stating it is not the final report and directing readers to `contact@northvalleyintel.com`.
+
+Readiness: pass locally; production verification pending deploy and live Kona Ice rerun.
+
+Two-Pass Verification:
+
+- Generation A result: Generation 36 local gate passed after fix.
+- Generation B result: pending after production deploy/self-QA.
+- Code changed between passes: yes.
+- Readiness achieved: no, pending production validation.

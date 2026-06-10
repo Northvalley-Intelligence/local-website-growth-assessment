@@ -1,5 +1,5 @@
 {
-  "currentGeneration": 35,
+  "currentGeneration": 36,
   "unresolvedCritical": [],
   "unresolvedHigh": [],
   "deferredLow": [
@@ -7,5 +7,9 @@
       "id": "P2-L01",
       "reason": "Screenshot-based visual QA is valuable but not required for Phase 1 readiness."
     }
+  ],
+  "notes": [
+    "Generation 36 addressed production Kona Ice timeout by bounding Cloudflare scan work so large sites can return partial reports instead of failing solely due runtime budget.",
+    "Production redeploy and live Kona Ice self-QA still need to complete before the new fix is considered production-verified."
   ]
 }

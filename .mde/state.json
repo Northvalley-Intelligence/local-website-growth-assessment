@@ -2,9 +2,9 @@
   "project": "Local Website Growth Assessment",
   "organization": "North Valley Intel",
   "currentPhase": "Phase 1",
-  "currentPhaseGoal": "Complete vertical slice: URL input to safe public crawl to signal extraction to scoring to report page.",
-  "phaseReadiness": "ready_for_founder_testing",
-  "currentGeneration": 35,
+  "currentPhaseGoal": "Phase 1 production founder testing with bounded Cloudflare scans that return truthful partial reports for large public sites.",
+  "phaseReadiness": "production_timeout_fix_local_gates_passed_deploy_pending",
+  "currentGeneration": 36,
   "missionVersion": "2026-06-09-human-agent-deploy-artifact-split",
   "phaseGoalVersion": "phase-1-complete-vertical-slice",
   "branches": {
@@ -17,7 +17,7 @@
       "url": "https://assessment.northvalleyintel.com"
     }
   },
-  "lastValidated": "2026-06-09",
+  "lastValidated": "2026-06-10",
   "requiredSessionInputs": [
     "Read MISSION.md",
     "Read .mde/state.json",
