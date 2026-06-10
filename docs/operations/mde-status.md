@@ -14,7 +14,7 @@ URL input -> safe public crawl -> signal extraction -> scoring -> report page.
 
 ## Current Readiness
 
-Phase 1 is deployed to staging and production for founder testing. Generation 38 added demand satisfaction to the assessment app by consuming the generated demand dataset from the separate demand-data-generation repository. Generation 39 completed the second clean verification with no implementation changes.
+Phase 1 is deployed to staging and production for founder testing. Generation 38 added demand satisfaction to the assessment app by consuming the generated demand dataset from the separate demand-data-generation repository. Generation 39 completed the second clean verification with no implementation changes. Generation 40 deployed the demand satisfaction release to staging and production.
 
 - Staging: `https://staging-assessment.northvalleyintel.com`
 - Production: `https://assessment.northvalleyintel.com`
@@ -23,12 +23,12 @@ Phase 1 is deployed to staging and production for founder testing. Generation 38
 
 ## Current BDD State
 
-- Current generation: 39
+- Current generation: 40
 - Critical unresolved: 0
 - High unresolved: 0
 - Low deferred: 1
 - Two-pass verification: passed for demand satisfaction integration in Generations 38 and 39
-- Self-QA gate: passed for a local Medina Clean assessment and rendered report inspection
+- Self-QA gate: passed locally, in staging, and in production for Medina Clean demand satisfaction reports
 
 Machine-readable BDD state lives in:
 
@@ -45,9 +45,15 @@ Machine-readable BDD state lives in:
 - Integration tests: 6 passed
 - Build: passed
 - Cloudflare build: passed with documented warnings
+- Staging deployment: passed, Cloudflare version `bd4f3642-2534-4f94-9f1c-108b14478e8e`
+- Production deployment: passed, Cloudflare version `c3e7273e-1179-4a36-8542-1931fd352c7b`
 - Latest local validation scan: `medinaclean-com-1781067349467`
 - Latest local scan result: completed with 11 pages crawled, high evidence confidence, PageSpeed measured, demand satisfaction assessed as Cleaning demand, and demand opportunities rendered with pages checked, found evidence, and missing signals.
-- Report page check: demand section present in rendered HTML with `Customer Demand Fit`, `Cleaning demand`, `What We Found`, `Demand Gaps To Review`, and `Demand opportunities with evidence`.
+- Latest staging validation scan: `medinaclean-com-1781068904431`
+- Latest staging scan result: completed with 7 pages crawled, high evidence confidence, Cleaning demand satisfaction, phone and location evidence found, PageSpeed unavailable without an invented score, and rendered demand section present.
+- Latest production validation scan: `medinaclean-com-1781069250781`
+- Latest production scan result: completed with 7 pages crawled, high evidence confidence, Cleaning demand satisfaction, phone and location evidence found, PageSpeed unavailable without an invented score, and rendered demand section present.
+- Report page check: demand section present in rendered HTML with `Customer Demand Fit`, `Cleaning demand`, `What We Found`, `Demand Gaps To Review`, `Demand opportunities with evidence`, and `Pages checked`.
 - Demand integration result: generated demand records remain owned by `demand-data-generation`; this app consumes the active dataset and evaluates how the specific website satisfies observable demand.
 
 ## Known Risks
@@ -69,7 +75,7 @@ None required for current Phase 1 founder testing.
 
 ## Recommended Next Step
 
-Deploy demand satisfaction to staging/production, then founder review of reports for supported local-service sectors.
+Founder review of staging or production reports for supported local-service sectors.
 
 Use Phase 2 for:
 

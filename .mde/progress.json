@@ -1,7 +1,7 @@
 {
   "phase": "Phase 1",
   "status": "ready_for_founder_testing",
-  "lastGeneration": 39,
+  "lastGeneration": 40,
   "automatedGate": {
     "format": "pass",
     "lint": "pass",
@@ -17,9 +17,9 @@
     "latestProductionScanResult": "completed with 11 pages, high evidence confidence, PageSpeed failed honestly, Performance unavailable"
   },
   "recommendation": "founder_review",
-  "currentGeneration": 39,
+  "currentGeneration": 40,
   "phaseReadiness": "ready_for_founder_testing",
-  "latestProductionIssue": "Production currently lacks the demand satisfaction integration until the Generation 38/39 changes are deployed.",
+  "latestProductionIssue": "No unresolved Critical or High issue after demand satisfaction deployment self-QA.",
   "latestLocalValidation": {
     "format": "passed",
     "lint": "passed",
@@ -32,6 +32,11 @@
   "nextReportDistributionRequirement": "Phase 2 one-page teaser PDF must state it is not the final report and direct readers to contact@northvalleyintel.com for the complete report and fixing strategy.",
   "latestLocalScan": "medinaclean-com-1781067349467",
   "latestLocalScanResult": "completed with 11 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, demand report section rendered with found evidence, missing signals, and pages checked",
-  "latestProductionDeployVersion": "52a68705-47ab-4642-b4e2-df4477b1f0e3",
-  "twoPassVerification": "passed for demand satisfaction integration: Generation 38 + Generation 39"
+  "latestStagingScan": "medinaclean-com-1781068904431",
+  "latestStagingScanResult": "completed with 7 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, PageSpeed unavailable without invented score, rendered demand section present",
+  "latestProductionScan": "medinaclean-com-1781069250781",
+  "latestProductionScanResult": "completed with 7 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, PageSpeed unavailable without invented score, rendered demand section present",
+  "latestStagingDeployVersion": "bd4f3642-2534-4f94-9f1c-108b14478e8e",
+  "latestProductionDeployVersion": "c3e7273e-1179-4a36-8542-1931fd352c7b",
+  "twoPassVerification": "passed for demand satisfaction integration: Generation 38 + Generation 39; Generation 40 deployed and live self-QA passed"
 }

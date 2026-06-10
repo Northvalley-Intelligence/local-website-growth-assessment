@@ -19,5 +19,21 @@
   "knownWarnings": [
     "Turbopack tracing warning from local filesystem-backed scan store.",
     "OpenNext generated bundle warning about ../../tsconfig.base.json."
-  ]
+  ],
+  "latestRelease": {
+    "date": "2026-06-10",
+    "commit": "9e2a407",
+    "staging": {
+      "branch": "staging",
+      "version": "bd4f3642-2534-4f94-9f1c-108b14478e8e",
+      "selfQaScan": "medinaclean-com-1781068904431",
+      "result": "passed"
+    },
+    "production": {
+      "branch": "main",
+      "version": "c3e7273e-1179-4a36-8542-1931fd352c7b",
+      "selfQaScan": "medinaclean-com-1781069250781",
+      "result": "passed"
+    }
+  }
 }
