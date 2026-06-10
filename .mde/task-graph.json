@@ -14,6 +14,11 @@
       "id": "phase-2-background-execution",
       "status": "next",
       "summary": "Move long-running assessments to a durable background execution model."
+    },
+    {
+      "id": "demand-artifact-sync",
+      "status": "next",
+      "summary": "Automate publishing or syncing active demand-data-generation artifacts into the assessment app."
     }
   ],
   "edges": [
@@ -24,6 +29,10 @@
     {
       "from": "phase-1-founder-review",
       "to": "phase-2-background-execution"
+    },
+    {
+      "from": "phase-1-founder-review",
+      "to": "demand-artifact-sync"
     }
   ]
 }

@@ -29,6 +29,22 @@ function report(index: number): AssessmentReport {
     topRecommendedFixes: [],
     revenueLeakageExplanation: "Explanation",
     neighborReferralScore: 7,
+    demandSatisfaction: {
+      status: "skipped",
+      sector: null,
+      sectorLabel: null,
+      score: null,
+      confidence: "low",
+      demandRecordsEvaluated: 0,
+      pagesChecked: [],
+      summary: "Demand fit was not assessed for this fixture.",
+      foundSummary: [],
+      missingSummary: [],
+      intentCoverage: [],
+      categoryCoverage: [],
+      opportunities: [],
+      records: []
+    },
     disclaimer:
       "This is an automated public website assessment, not a legal, SEO, accessibility, or security compliance certification.",
     evidenceQuality: {

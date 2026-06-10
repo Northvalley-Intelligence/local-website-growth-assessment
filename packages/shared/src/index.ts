@@ -1,5 +1,8 @@
 import { isIP } from "node:net";
 import { z } from "zod";
+import type { DemandSatisfactionReport } from "./demand/satisfaction.js";
+
+export * from "./demand/satisfaction.js";
 
 export const crawlerPolicy = {
   userAgent: "NorthValleyIntelWebsiteAssessmentBot/0.1",
@@ -203,6 +206,7 @@ export type AssessmentReport = {
   topRecommendedFixes: string[];
   revenueLeakageExplanation: string;
   neighborReferralScore: number;
+  demandSatisfaction: DemandSatisfactionReport;
   disclaimer: typeof disclaimer;
   evidenceQuality: EvidenceQuality;
   crawlMetadata: CrawlMetadata;

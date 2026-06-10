@@ -311,6 +311,33 @@ dd {
   width: 28px;
 }
 
+.demand-panel {
+  border: 1px solid #c8d0c9;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.demand-summary {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-bottom: 16px;
+}
+
+.demand-summary p {
+  margin: 0 0 8px;
+}
+
+.demand-opportunity {
+  border-left: 4px solid #c8d0c9;
+  padding-left: 12px;
+}
+
+.demand-opportunity + .demand-opportunity {
+  margin-top: 16px;
+}
+
 .scorecards {
   display: grid;
   gap: 12px;
@@ -490,6 +517,7 @@ ul {
   .report-header,
   .report-hero,
   .decision-grid,
+  .demand-summary,
   .score-row {
     grid-template-columns: 1fr;
   }

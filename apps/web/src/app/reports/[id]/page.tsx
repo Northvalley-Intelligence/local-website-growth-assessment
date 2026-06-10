@@ -119,6 +119,128 @@ export default async function ReportPage({
           </ol>
         </section>
 
+        <section aria-labelledby="demand-fit">
+          <div className="section-heading">
+            <p className="eyebrow">Customer Demand Fit</p>
+            <h2 id="demand-fit">Does The Website Match What People Search For?</h2>
+          </div>
+          <div className="demand-panel">
+            <div className="demand-summary">
+              <div>
+                <span className="priority-indicator secondary">
+                  {report.demandSatisfaction.status === "assessed"
+                    ? `${report.demandSatisfaction.sectorLabel} demand`
+                    : "Not scored"}
+                </span>
+                <p>{report.demandSatisfaction.summary}</p>
+                <p>
+                  Confidence: {report.demandSatisfaction.confidence}. Pages checked:{" "}
+                  {report.demandSatisfaction.pagesChecked.length}.
+                </p>
+              </div>
+              <div className={scoreClass(report.demandSatisfaction.score ?? 0)}>
+                {report.demandSatisfaction.score === null
+                  ? "Not measured"
+                  : report.demandSatisfaction.score}
+              </div>
+            </div>
+
+            {report.demandSatisfaction.status === "assessed" ? (
+              <>
+                <div className="evidence-columns">
+                  <div>
+                    <h4>What We Found</h4>
+                    <ul>
+                      {report.demandSatisfaction.foundSummary.length > 0 ? (
+                        report.demandSatisfaction.foundSummary.map((item) => (
+                          <li key={`demand-found-${item}`}>{item}</li>
+                        ))
+                      ) : (
+                        <li>
+                          We did not find strong demand-matching evidence on the checked
+                          pages yet.
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>Demand Gaps To Review</h4>
+                    <ul>
+                      {report.demandSatisfaction.missingSummary.length > 0 ? (
+                        report.demandSatisfaction.missingSummary.map((item) => (
+                          <li key={`demand-missing-${item}`}>{item}</li>
+                        ))
+                      ) : (
+                        <li>No major demand gaps were identified in this dataset.</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+
+                {report.demandSatisfaction.opportunities.length > 0 ? (
+                  <details>
+                    <summary>Demand opportunities with evidence</summary>
+                    <div className="trace-list compact">
+                      {report.demandSatisfaction.opportunities.map((opportunity) => (
+                        <article
+                          key={`${opportunity.keyword}-${opportunity.intent}`}
+                          className="demand-opportunity"
+                        >
+                          <h4>{opportunity.keyword}</h4>
+                          <p>{opportunity.whyItMatters}</p>
+                          <p>
+                            Coverage: {coverageLabel(opportunity.coverage)}. Confidence:{" "}
+                            {opportunity.confidence}.
+                          </p>
+                          {opportunity.foundEvidence.length > 0 ? (
+                            <>
+                              <p>
+                                <strong>What we found:</strong>
+                              </p>
+                              <ul className="evidence-detail-list">
+                                {opportunity.foundEvidence.map((evidence) => (
+                                  <li key={`${opportunity.keyword}-${evidence.page}`}>
+                                    Found "{evidence.matched}" on {evidence.page}:{" "}
+                                    {evidence.evidence}
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          ) : null}
+                          {opportunity.missingSignals.length > 0 ? (
+                            <>
+                              <p>
+                                <strong>What is missing:</strong>
+                              </p>
+                              <ul className="evidence-detail-list">
+                                {opportunity.missingSignals.map((signal) => (
+                                  <li key={`${opportunity.keyword}-${signal}`}>
+                                    {signal}
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          ) : null}
+                          <p>
+                            <strong>Pages checked:</strong>{" "}
+                            {opportunity.pagesChecked.slice(0, 5).join(", ")}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
+              </>
+            ) : (
+              <p>
+                This section is skipped unless the checked pages clearly match one of
+                the supported demand datasets. We do not force demand conclusions when
+                the industry evidence is not strong enough.
+              </p>
+            )}
+          </div>
+        </section>
+
         <section aria-labelledby="score-summary">
           <div className="section-heading">
             <p className="eyebrow">Score Summary</p>
@@ -458,4 +580,8 @@ function scoreClass(
   if (score >= 80) return "score-badge strong";
   if (score >= 60) return "score-badge moderate";
   return "score-badge weak";
+}
+
+function coverageLabel(coverage: string): string {
+  return coverage.replace(/_/g, " ");
 }

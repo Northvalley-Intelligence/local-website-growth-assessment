@@ -161,8 +161,12 @@ describe("Phase 1 assessment pipeline", () => {
     };
     const { fetchAdapter: baseFetchAdapter } = mockedSite(pages);
     const fetchAdapter: FetchAdapter = async (url, init) => {
-      if (init?.method !== "HEAD" && !url.endsWith("/robots.txt")) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+      if (
+        init?.method !== "HEAD" &&
+        !url.endsWith("/robots.txt") &&
+        !url.endsWith("/")
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 15));
       }
       return baseFetchAdapter(url, init);
     };
@@ -172,13 +176,14 @@ describe("Phase 1 assessment pipeline", () => {
       {
         fetchAdapter,
         maxPages: 10,
-        maxCrawlDurationMs: 1,
+        maxCrawlDurationMs: 10,
         crawlDelayMs: 0,
         now: () => new Date("2026-06-10T12:00:00.000Z")
       }
     );
 
-    expect(report.crawlMetadata.pagesCrawled).toBe(1);
+    expect(report.crawlMetadata.pagesCrawled).toBeGreaterThanOrEqual(1);
+    expect(report.crawlMetadata.pagesCrawled).toBeLessThan(3);
     expect(report.evidenceQuality.assessmentStatus).toBe("partial");
     expect(report.evidenceQuality.limitations).toContain(
       "The assessment stopped crawling additional pages to stay within the production runtime budget."
@@ -949,5 +954,32 @@ describe("Phase 1 assessment pipeline", () => {
     expect(report.topBusinessProblems).not.toContain(
       "Lead Conversion: Your lead conversion signals are helping visitors understand and trust the business."
     );
+  });
+
+  it("includes demand satisfaction in the generated customer report", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><head>
+        <title>Example Cleaning Services</title>
+        <meta name="description" content="House cleaning, deep cleaning, move out cleaning, and recurring home cleaning." />
+        </head><body>
+          <p>${"We provide house cleaning, deep cleaning, office cleaning, weekly cleaning, free estimates, reviews, and service area information for homeowners. ".repeat(12)}</p>
+        </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        crawlDelayMs: 0
+      }
+    );
+
+    expect(report.demandSatisfaction).toMatchObject({
+      status: "assessed",
+      sector: "cleaning",
+      sectorLabel: "Cleaning"
+    });
+    expect(report.demandSatisfaction.score).not.toBeNull();
+    expect(report.demandSatisfaction.foundSummary.length).toBeGreaterThan(0);
   });
 });

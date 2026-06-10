@@ -1,0 +1,84 @@
+{
+  "generation": 38,
+  "phase": "Phase 1",
+  "missionVersion": "phase-1-demand-satisfaction-consumption",
+  "phaseGoalVersion": "phase-1-complete-vertical-slice",
+  "bddSummary": {
+    "critical": 10,
+    "high": 9,
+    "low": 1
+  },
+  "newScenarios": [
+    "Generated demand data is consumed by the assessment app as an input artifact.",
+    "A supported local-service website report includes demand satisfaction based on crawled public evidence.",
+    "Demand gaps are shown with pages checked, found evidence where available, missing signals, and confidence.",
+    "Unsupported or unclear industries skip demand scoring honestly.",
+    "Legacy stored reports render safely with demand fit marked not assessed."
+  ],
+  "reusedScenarios": [
+    "Asynchronous submission creates a trackable job.",
+    "Reports connect scores to evidence and business impact.",
+    "Self-QA inspects actual API/UI output before founder review."
+  ],
+  "testSummary": {
+    "reused": [
+      "worker assessment pipeline tests",
+      "report page structure tests",
+      "scan store tests",
+      "integration tests"
+    ],
+    "new": [
+      "shared demand satisfaction tests",
+      "worker report demand satisfaction test",
+      "report structure demand section test",
+      "legacy report demand fallback fixture"
+    ],
+    "removed": []
+  },
+  "implementationSummary": {
+    "filesChanged": [
+      "packages/shared/src/demand/records.ts",
+      "packages/shared/src/demand/satisfaction.ts",
+      "packages/shared/src/index.ts",
+      "apps/worker/src/index.ts",
+      "apps/web/src/app/reports/[id]/page.tsx",
+      "apps/web/src/app/globals.css",
+      "apps/web/src/lib/scan-store.ts"
+    ],
+    "architecturalChanges": [
+      "Demand generation remains in demand-data-generation.",
+      "Assessment app consumes the active generated demand dataset as a release artifact.",
+      "Website-specific demand satisfaction is evaluated from crawled public evidence."
+    ]
+  },
+  "outcome": "passed",
+  "failureReasons": {
+    "critical": [],
+    "high": []
+  },
+  "selfQaResults": {
+    "scenariosExecuted": [
+      "Submitted medinaclean.com through local API.",
+      "Polled pending/running/completed status.",
+      "Inspected completed report API payload.",
+      "Inspected rendered report HTML for demand section."
+    ],
+    "issuesFound": [
+      "Local dev command initially used an unrelated ROSA_ADMIN_PASSWORD env pattern; corrected understanding because this app does not use it.",
+      "A time-budget test depended on a race where the homepage might not be crawled; fixture was made deterministic."
+    ],
+    "actualResults": [
+      "medinaclean.com normalized to https://medinaclean.com/ and queued immediately.",
+      "Local scan medinaclean-com-1781067349467 completed with 11 pages crawled and high evidence confidence.",
+      "Demand satisfaction assessed Cleaning demand and rendered found evidence, missing signals, pages checked, and opportunities.",
+      "Prior Medina Clean phone and service-area false negatives were not observed."
+    ]
+  },
+  "readiness": "pass_after_implementation",
+  "twoPassVerification": {
+    "generationAResult": "pass",
+    "generationBResult": "pending",
+    "codeChangedBetweenPasses": true,
+    "readinessAchieved": false
+  }
+}

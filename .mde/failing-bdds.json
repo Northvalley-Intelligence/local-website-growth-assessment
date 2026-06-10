@@ -1,15 +1,21 @@
 {
-  "currentGeneration": 37,
+  "currentGeneration": 39,
   "unresolvedCritical": [],
   "unresolvedHigh": [],
   "deferredLow": [
     {
       "id": "P2-L01",
       "reason": "Screenshot-based visual QA is valuable but not required for Phase 1 readiness."
+    },
+    {
+      "id": "P1-L01",
+      "reason": "Automated trend weighting from demand-data-generation should wait for a formal demand artifact publishing/sync process. Phase 1 uses priority weighting from the active generated dataset."
     }
   ],
   "notes": [
     "Generation 36 addressed production Kona Ice timeout by bounding Cloudflare scan work so large sites can return partial reports instead of failing solely due runtime budget.",
-    "Generation 37 passed as the second clean verification with no implementation changes. Fresh production scan www-kona-ice-com-1781065942639 completed with partial evidence, medium confidence, runtime-budget limitation visible, and report HTTP 200."
+    "Generation 37 passed as the second clean verification with no implementation changes. Fresh production scan www-kona-ice-com-1781065942639 completed with partial evidence, medium confidence, runtime-budget limitation visible, and report HTTP 200.",
+    "Generation 38 added demand satisfaction by consuming the generated active demand dataset in the assessment app and rendering Customer Demand Fit in reports.",
+    "Generation 39 passed as the second clean verification with no implementation changes. Local Medina Clean self-QA showed Cleaning demand satisfaction, found evidence, missing signals, pages checked, and rendered report output."
   ]
 }

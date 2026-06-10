@@ -1967,3 +1967,112 @@ Two-Pass Verification:
 - Generation B result: Generation 37 passed with no implementation changes.
 - Code changed between passes: no.
 - Readiness achieved: yes for the production timeout fix.
+
+## Generation 38: Demand Satisfaction Integration
+
+Mission Version: Phase 1 complete vertical slice with website-specific demand satisfaction added to customer reports.
+
+Phase Goal Version: Phase 1 complete vertical slice.
+
+BDD Summary:
+
+- Critical count: 10
+- High count: 9
+- Low count: 1
+
+BDD Changes:
+
+- New Critical scenarios: generated demand data is consumed by this assessment app while demand generation remains in `demand-data-generation`; supported local-service reports include demand satisfaction based on crawled public evidence; demand gaps show pages checked, found evidence where available, missing signals, and confidence.
+- New High scenarios: unsupported or unclear industries skip demand scoring honestly; demand opportunities are written in business language and appear in the decision-oriented report flow; legacy stored reports render safely with demand fit marked not assessed.
+- New Low scenario: trend weighting should be automated from the demand-data-generation trend artifact after a formal artifact publishing/sync process exists.
+
+Test Summary:
+
+- Reused tests: worker assessment pipeline tests, report page structure tests, scan store tests, integration tests, format/lint/typecheck/build gates.
+- New tests: shared demand satisfaction tests, worker generated-report demand satisfaction test, report structure demand section test, scan-store demand fallback fixture.
+- Removed tests: none.
+
+Implementation Summary:
+
+- Files changed: shared demand records/evaluator/schema, worker assessment report generation, customer report page, report CSS, scan-store legacy normalization, worker/report/scan-store tests.
+- Components changed: report schema, worker report generation, customer-facing report presentation.
+- Architectural changes: demand generation remains in the separate demand-data-generation repository; this app consumes the generated active demand dataset as a release artifact and evaluates each crawled website against that demand evidence.
+
+Outcome: passed after implementation.
+
+Failure Reasons:
+
+- Critical failures: production/founder-visible reports did not include the demand satisfaction work because it had only been stabilized in the separate demand-data-generation repo.
+- High failures: MDE artifacts did not make that cross-repository boundary obvious enough.
+
+Self-QA Results:
+
+- Scenarios executed: submitted `medinaclean.com` through the local API, observed pending/running/completed status, inspected completed report API payload, inspected rendered report HTML.
+- Actual results observed: scan `medinaclean-com-1781067349467` completed with 11 pages crawled, high evidence confidence, Cleaning demand satisfaction, found evidence, missing signals, pages checked, and rendered `Customer Demand Fit` section.
+- Issues found: local dev command initially used an unrelated `ROSA_ADMIN_PASSWORD` environment pattern; this app does not use that variable. The crawl time-budget test was race-prone and could time out before a homepage was collected.
+- Fixes made: corrected the test fixture so the homepage is collected before queued pages hit the time budget; documented the app-specific environment finding in session status.
+- Remaining risks: demand dataset sync is manual for Phase 1; sector inference is deterministic and conservative.
+
+Readiness: pass for Generation 38; second clean verification pending.
+
+Two-Pass Verification:
+
+- Generation A result: Generation 38 passed after implementation and self-QA.
+- Generation B result: pending.
+- Code changed between passes: yes.
+- Readiness achieved: no, pending second clean verification.
+
+## Generation 39: Second Clean Demand Satisfaction Verification
+
+Mission Version: same as Generation 38.
+
+Phase Goal Version: same as Generation 38.
+
+BDD Summary:
+
+- Critical count: 10
+- High count: 9
+- Low count: 1
+
+BDD Changes:
+
+- New scenarios: none.
+- Removed scenarios: none.
+- Modified scenarios: none.
+- Reused scenarios: Generation 38 demand satisfaction scenarios plus existing Phase 1 async, evidence traceability, and self-QA scenarios.
+
+Test Summary:
+
+- Reused tests: format, lint, typecheck, 46 unit tests, 6 integration tests, normal build and Cloudflare/OpenNext build from Generation 38.
+- New tests: none.
+- Removed tests: none.
+
+Implementation Summary:
+
+- Files changed: no implementation files changed between Generation 38 and Generation 39.
+- Components changed: none.
+- Architectural changes: none.
+
+Outcome: passed.
+
+Failure Reasons:
+
+- Critical failures: none.
+- High failures: none.
+
+Self-QA Results:
+
+- Scenarios executed: regenerated BDDs from the same mission and phase goal, reran automated gates without implementation changes, reviewed local Medina Clean self-QA output.
+- Actual results observed: format passed, lint passed, typecheck passed, 46 unit tests passed, 6 integration tests passed. Demand section remained present in rendered local report output.
+- Issues found: none.
+- Fixes made: none.
+- Remaining risks: deployment still required before production includes demand satisfaction; automated demand artifact sync remains future work.
+
+Readiness: pass for demand satisfaction integration.
+
+Two-Pass Verification:
+
+- Generation A result: Generation 38 passed after implementation and self-QA.
+- Generation B result: Generation 39 passed with no implementation changes.
+- Code changed between passes: no.
+- Readiness achieved: yes for local demand satisfaction integration.

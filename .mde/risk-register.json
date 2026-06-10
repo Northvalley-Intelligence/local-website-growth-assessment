@@ -27,6 +27,13 @@
       "status": "founder_decision",
       "risk": "Mistaken personal GitHub repository still exists.",
       "mitigation": "Delete only with explicit founder approval."
+    },
+    {
+      "id": "R-005",
+      "severity": "Medium",
+      "status": "accepted_phase_1",
+      "risk": "Demand satisfaction consumes a copied active demand dataset artifact and can become stale if demand-data-generation changes are not synced.",
+      "mitigation": "Keep demand generation in the separate demand-data-generation repository; automate artifact publishing or syncing before scaling recurring validation."
     }
   ]
 }

@@ -1,8 +1,8 @@
 {
-  "currentGeneration": 35,
-  "criticalCount": 7,
-  "highCount": 6,
-  "lowCount": 0,
+  "currentGeneration": 39,
+  "criticalCount": 10,
+  "highCount": 9,
+  "lowCount": 1,
   "activeScenarios": [
     {
       "id": "P1-C01",
@@ -40,6 +40,21 @@
       "scenario": "PageSpeed failures are reported honestly without inventing performance evidence."
     },
     {
+      "id": "P1-C08",
+      "priority": "Critical",
+      "scenario": "Generated demand data is consumed by the assessment app as an input artifact; demand generation remains in the separate demand-data-generation repository."
+    },
+    {
+      "id": "P1-C09",
+      "priority": "Critical",
+      "scenario": "A supported local-service website report includes demand satisfaction based on crawled public evidence."
+    },
+    {
+      "id": "P1-C10",
+      "priority": "Critical",
+      "scenario": "Demand gaps are not shown without pages checked, found evidence where available, missing signals, and confidence."
+    },
+    {
       "id": "P1-H01",
       "priority": "High",
       "scenario": "Automated gates pass: format, lint, typecheck, unit tests, integration tests, build, and Cloudflare build."
@@ -68,6 +83,26 @@
       "id": "P1-H06",
       "priority": "High",
       "scenario": "Two consecutive clean generations pass before phase readiness is claimed."
+    },
+    {
+      "id": "P1-H07",
+      "priority": "High",
+      "scenario": "Unsupported or unclear website industries skip demand scoring honestly instead of forcing a misleading demand score."
+    },
+    {
+      "id": "P1-H08",
+      "priority": "High",
+      "scenario": "Demand opportunities are written in business language and appear in the decision-oriented report flow."
+    },
+    {
+      "id": "P1-H09",
+      "priority": "High",
+      "scenario": "Legacy stored reports render safely by showing demand fit as not assessed."
+    },
+    {
+      "id": "P1-L01",
+      "priority": "Low",
+      "scenario": "Trend weighting is fully automated from the demand-data-generation trend artifact."
     }
   ]
 }

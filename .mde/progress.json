@@ -1,12 +1,12 @@
 {
   "phase": "Phase 1",
   "status": "ready_for_founder_testing",
-  "lastGeneration": 35,
+  "lastGeneration": 39,
   "automatedGate": {
     "format": "pass",
     "lint": "pass",
     "typecheck": "pass",
-    "unitTests": "38 passed",
+    "unitTests": "46 passed",
     "integrationTests": "6 passed",
     "build": "pass",
     "cloudflareBuild": "pass_with_documented_warnings"
@@ -17,21 +17,21 @@
     "latestProductionScanResult": "completed with 11 pages, high evidence confidence, PageSpeed failed honestly, Performance unavailable"
   },
   "recommendation": "founder_review",
-  "currentGeneration": 37,
+  "currentGeneration": 39,
   "phaseReadiness": "ready_for_founder_testing",
-  "latestProductionIssue": "www.kona-ice.com failed because full assessment exceeded Phase 1 Cloudflare runtime watchdog.",
+  "latestProductionIssue": "Production currently lacks the demand satisfaction integration until the Generation 38/39 changes are deployed.",
   "latestLocalValidation": {
     "format": "passed",
     "lint": "passed",
     "typecheck": "passed",
-    "unitTests": "41 passed",
+    "unitTests": "46 passed",
     "integrationTests": "6 passed",
     "build": "passed",
     "cloudflareBuild": "passed with documented warnings"
   },
   "nextReportDistributionRequirement": "Phase 2 one-page teaser PDF must state it is not the final report and direct readers to contact@northvalleyintel.com for the complete report and fixing strategy.",
-  "latestProductionScan": "www-kona-ice-com-1781065942639",
-  "latestProductionScanResult": "completed with partial report, 5 pages crawled, medium evidence confidence, runtime-budget limitation visible, PageSpeed unavailable without invented score, report HTTP 200",
+  "latestLocalScan": "medinaclean-com-1781067349467",
+  "latestLocalScanResult": "completed with 11 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, demand report section rendered with found evidence, missing signals, and pages checked",
   "latestProductionDeployVersion": "52a68705-47ab-4642-b4e2-df4477b1f0e3",
-  "twoPassVerification": "passed for production timeout fix: Generation 36 + Generation 37"
+  "twoPassVerification": "passed for demand satisfaction integration: Generation 38 + Generation 39"
 }

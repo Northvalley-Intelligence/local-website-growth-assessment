@@ -5,7 +5,8 @@ import {
   type CategoryScoreFactor,
   type CategoryAssessment,
   type AssessmentReport,
-  type AssessmentStatus
+  type AssessmentStatus,
+  type DemandSatisfactionReport
 } from "@northvalleyintel/assessment-shared";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
@@ -287,7 +288,14 @@ async function ensureD1Schema(d1: D1DatabaseBinding): Promise<void> {
 }
 
 function normalizeStoredItem(item: AssessmentJob | AssessmentReport): AssessmentJob {
-  if ("status" in item) return item;
+  if ("status" in item) {
+    return item.report
+      ? {
+          ...item,
+          report: normalizeReport(item.report)
+        }
+      : item;
+  }
 
   return {
     id: item.id,
@@ -303,8 +311,13 @@ function normalizeStoredItem(item: AssessmentJob | AssessmentReport): Assessment
 }
 
 function normalizeReport(report: AssessmentReport): AssessmentReport {
+  const legacyReport = report as AssessmentReport & {
+    demandSatisfaction?: DemandSatisfactionReport;
+  };
+
   return {
     ...report,
+    demandSatisfaction: legacyReport.demandSatisfaction ?? defaultDemandSatisfaction(),
     evidenceQuality: report.evidenceQuality ?? {
       assessmentStatus:
         report.crawlMetadata.pagesCrawled > 1 ? "successful" : "partial",
@@ -319,6 +332,26 @@ function normalizeReport(report: AssessmentReport): AssessmentReport {
       ]
     },
     categories: report.categories.map(normalizeCategory)
+  };
+}
+
+function defaultDemandSatisfaction(): DemandSatisfactionReport {
+  return {
+    status: "skipped",
+    sector: null,
+    sectorLabel: null,
+    score: null,
+    confidence: "low",
+    demandRecordsEvaluated: 0,
+    pagesChecked: [],
+    summary:
+      "Demand fit was not assessed because this report was created before demand satisfaction was added.",
+    foundSummary: [],
+    missingSummary: [],
+    intentCoverage: [],
+    categoryCoverage: [],
+    opportunities: [],
+    records: []
   };
 }
 

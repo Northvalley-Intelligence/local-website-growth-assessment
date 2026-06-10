@@ -1,5 +1,6 @@
 import {
   crawlerPolicy,
+  assessDemandSatisfaction,
   disclaimer,
   gradeFromScore,
   redactSecrets,
@@ -120,6 +121,11 @@ export async function assessWebsite(
     passiveAssetTimeoutMs: options.passiveAssetTimeoutMs
   });
   const categories = scoreSignals(signals, pagespeed, evidenceQuality.reportQuality);
+  const demandSatisfaction = assessDemandSatisfaction({
+    websiteEvidence: {
+      pages: signals.pages
+    }
+  });
   const overallScore = weightedOverallScore(categories);
   const createdAt = (options.now ?? (() => new Date()))().toISOString();
   const domain = startedUrl.hostname;
@@ -165,6 +171,7 @@ export async function assessWebsite(
     revenueLeakageExplanation:
       "When visitors cannot quickly confirm what you do, where you work, why they should trust you, and how to contact you, some of those visitors leave instead of becoming calls, bookings, or estimate requests.",
     neighborReferralScore: Math.max(1, Math.min(10, Math.round(overallScore / 10))),
+    demandSatisfaction,
     disclaimer,
     evidenceQuality: evidenceQuality.reportQuality,
     crawlMetadata,

@@ -13,6 +13,7 @@ describe("customer-facing report structure", () => {
       "Executive Summary",
       "Biggest Opportunity",
       "Fix These First",
+      "Does The Website Match What People Search For?",
       "Where The Website Stands",
       "Why These Actions Matter",
       "What We Checked",
@@ -76,6 +77,22 @@ describe("customer-facing report structure", () => {
     expect(source).toContain("evidence-detail-list");
     expect(source.indexOf("Evidence reviewed:")).toBeLessThan(
       source.indexOf("Existing content vs recommended signal")
+    );
+  });
+
+  it("shows demand satisfaction with found evidence before demand gaps", () => {
+    const source = readFileSync(
+      join(process.cwd(), "apps/web/src/app/reports/[id]/page.tsx"),
+      "utf8"
+    );
+
+    expect(source).toContain("Customer Demand Fit");
+    expect(source).toContain("report.demandSatisfaction.summary");
+    expect(source).toContain("Demand Gaps To Review");
+    expect(source).toContain("Demand opportunities with evidence");
+    expect(source).toContain("opportunity.pagesChecked");
+    expect(source.indexOf("What We Found")).toBeLessThan(
+      source.indexOf("Demand Gaps To Review")
     );
   });
 });
