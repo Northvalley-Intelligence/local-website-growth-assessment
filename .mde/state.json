@@ -3,8 +3,8 @@
   "organization": "North Valley Intel",
   "currentPhase": "Phase 1",
   "currentPhaseGoal": "Phase 1 production founder testing with bounded Cloudflare scans that return truthful partial reports for large public sites.",
-  "phaseReadiness": "generation_36_passed_second_clean_verification_pending",
-  "currentGeneration": 36,
+  "phaseReadiness": "ready_for_founder_testing",
+  "currentGeneration": 37,
   "missionVersion": "2026-06-09-human-agent-deploy-artifact-split",
   "phaseGoalVersion": "phase-1-complete-vertical-slice",
   "branches": {

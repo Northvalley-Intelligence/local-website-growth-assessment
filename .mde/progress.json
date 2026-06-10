@@ -17,8 +17,8 @@
     "latestProductionScanResult": "completed with 11 pages, high evidence confidence, PageSpeed failed honestly, Performance unavailable"
   },
   "recommendation": "founder_review",
-  "currentGeneration": 36,
-  "phaseReadiness": "generation_36_passed_second_clean_verification_pending",
+  "currentGeneration": 37,
+  "phaseReadiness": "ready_for_founder_testing",
   "latestProductionIssue": "www.kona-ice.com failed because full assessment exceeded Phase 1 Cloudflare runtime watchdog.",
   "latestLocalValidation": {
     "format": "passed",
@@ -30,7 +30,8 @@
     "cloudflareBuild": "passed with documented warnings"
   },
   "nextReportDistributionRequirement": "Phase 2 one-page teaser PDF must state it is not the final report and direct readers to contact@northvalleyintel.com for the complete report and fixing strategy.",
-  "latestProductionScan": "www-kona-ice-com-1781065534888",
-  "latestProductionScanResult": "completed with partial report, 6 pages crawled, medium evidence confidence, runtime-budget limitation visible, PageSpeed unavailable without invented score",
-  "latestProductionDeployVersion": "52a68705-47ab-4642-b4e2-df4477b1f0e3"
+  "latestProductionScan": "www-kona-ice-com-1781065942639",
+  "latestProductionScanResult": "completed with partial report, 5 pages crawled, medium evidence confidence, runtime-budget limitation visible, PageSpeed unavailable without invented score, report HTTP 200",
+  "latestProductionDeployVersion": "52a68705-47ab-4642-b4e2-df4477b1f0e3",
+  "twoPassVerification": "passed for production timeout fix: Generation 36 + Generation 37"
 }

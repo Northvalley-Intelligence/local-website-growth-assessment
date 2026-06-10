@@ -1906,3 +1906,64 @@ Two-Pass Verification:
 - Generation B result: pending second clean verification.
 - Code changed between passes: yes.
 - Readiness achieved: no, pending second clean verification.
+
+## Generation 37: Second Clean Production Timeout Verification
+
+Mission Version: same as Generation 36.
+
+Phase Goal Version: same as Generation 36.
+
+BDD Summary:
+
+- Critical count: 3
+- High count: 2
+- Low count: 1
+
+BDD Changes:
+
+- New scenarios: none.
+- Removed scenarios: none.
+- Modified scenarios: none.
+- Reused scenarios: Generation 36 production large-site runtime scenarios.
+
+Test Summary:
+
+- Reused tests: format, lint, typecheck, 41 unit tests, 6 integration tests, normal build, Cloudflare/OpenNext build, production Kona Ice API and report page checks.
+- New tests: none.
+- Removed tests: none.
+
+Implementation Summary:
+
+- Files changed: no implementation files changed between Generation 36 and Generation 37.
+- Components changed: none.
+- Architectural changes: none.
+
+Outcome: passed.
+
+Failure Reasons:
+
+- Critical failures: none.
+- High failures: none.
+
+Self-QA Results:
+
+- Scenarios executed: full automated local gate, normal build, Cloudflare build, existing production Kona Ice report inspection, fresh production Kona Ice scan, fresh production report page check.
+- Actual results observed: format, lint, typecheck, 41 unit tests, 6 integration tests, normal build, and Cloudflare build passed. Existing production scan `www-kona-ice-com-1781065534888` remained completed with partial evidence and report HTTP 200. Fresh production scan `www-kona-ice-com-1781065942639` completed with 5 pages crawled, partial evidence status, medium confidence, visible production runtime-budget limitation, PageSpeed unavailable without an invented score, and report page HTTP 200.
+- Issues found: none.
+- Fixes made: none.
+- Remaining risks: local/manual full reports and robust long-running production scans still need Phase 2 background execution.
+
+Founder Inputs:
+
+- Decisions requested: none.
+- Credentials requested: none.
+- Mission updates requested: none.
+
+Readiness: pass for Phase 1 production founder testing with bounded large-site scans.
+
+Two-Pass Verification:
+
+- Generation A result: Generation 36 passed after implementation and production self-QA.
+- Generation B result: Generation 37 passed with no implementation changes.
+- Code changed between passes: no.
+- Readiness achieved: yes for the production timeout fix.

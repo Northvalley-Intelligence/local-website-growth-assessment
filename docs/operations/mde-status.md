@@ -23,12 +23,12 @@ Phase 1 is deployed to staging and production for founder testing. Generation 36
 
 ## Current BDD State
 
-- Current generation: 36
+- Current generation: 37
 - Critical unresolved: 0
 - High unresolved: 0
 - Low deferred: 1
-- Two-pass verification: pending second clean verification for the new production timeout fix
-- Self-QA gate: passed for the production Kona Ice rerun
+- Two-pass verification: passed for the production timeout fix
+- Self-QA gate: passed for two production Kona Ice runs
 
 Machine-readable BDD state lives in:
 
@@ -45,8 +45,8 @@ Machine-readable BDD state lives in:
 - Integration tests: 6 passed
 - Build: passed
 - Cloudflare build: passed with documented warnings
-- Latest production validation scan: `www-kona-ice-com-1781065534888`
-- Latest production scan result: completed with a partial report, 6 pages crawled, medium evidence confidence, visible runtime-budget limitation, and PageSpeed unavailable without an invented score.
+- Latest production validation scan: `www-kona-ice-com-1781065942639`
+- Latest production scan result: completed with a partial report, 5 pages crawled, medium evidence confidence, visible runtime-budget limitation, and PageSpeed unavailable without an invented score.
 - Report page check: HTTP 200.
 - Production fix result: large sites can now produce truthful partial reports instead of failing solely due scan duration.
 
