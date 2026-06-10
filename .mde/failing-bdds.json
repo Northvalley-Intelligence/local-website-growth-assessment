@@ -10,6 +10,6 @@
   ],
   "notes": [
     "Generation 36 addressed production Kona Ice timeout by bounding Cloudflare scan work so large sites can return partial reports instead of failing solely due runtime budget.",
-    "Production redeploy and live Kona Ice self-QA still need to complete before the new fix is considered production-verified."
+    "Production deploy and Kona Ice self-QA passed for scan www-kona-ice-com-1781065534888; second clean verification is still pending."
   ]
 }

@@ -1877,7 +1877,7 @@ Implementation Summary:
 - Components changed: Cloudflare production scan profile, crawl limit handling, passive asset check limits.
 - Architectural changes: Phase 1 production now uses a bounded Cloudflare assessment profile. Local full-report runs can still use the larger default crawl profile.
 
-Outcome: local gates passed; production deployment and live Kona Ice self-QA pending.
+Outcome: local gates passed; production deployment and live Kona Ice self-QA passed.
 
 Failure Reasons:
 
@@ -1886,11 +1886,11 @@ Failure Reasons:
 
 Self-QA Results:
 
-- Scenarios executed: focused worker and route tests, full format/lint/typecheck/unit/integration gates, normal build, Cloudflare/OpenNext build.
-- Actual results observed: 41 unit tests passed, 6 integration tests passed, normal build passed, Cloudflare build passed with documented Turbopack tracing warning.
+- Scenarios executed: focused worker and route tests, full format/lint/typecheck/unit/integration gates, normal build, Cloudflare/OpenNext build, production deploy, production Kona Ice scan, production report page check.
+- Actual results observed: 41 unit tests passed, 6 integration tests passed, normal build passed, Cloudflare build passed with documented Turbopack tracing warning. Production deployment version `52a68705-47ab-4642-b4e2-df4477b1f0e3` succeeded. Production scan `www-kona-ice-com-1781065534888` completed with 6 pages crawled, partial evidence status, medium confidence, visible production runtime-budget limitation, and PageSpeed unavailable without an invented score. Report page returned HTTP 200.
 - Issues found: initial typecheck failure because passive asset helper options had an old type annotation; fixed before final gate.
 - Fixes made: added `maxPages`, `maxCrawlDurationMs`, `passiveAssetCheckLimit`, and `passiveAssetTimeoutMs` assessment options; production route now passes a bounded Cloudflare profile; crawl time-budget exhaustion becomes visible in report limitations.
-- Remaining risks: production live self-QA against Kona Ice is still pending; true long-running full reports need Phase 2 background execution or local/manual full-report runs.
+- Remaining risks: true long-running full reports need Phase 2 background execution or local/manual full-report runs.
 
 Founder Inputs:
 
@@ -1898,11 +1898,11 @@ Founder Inputs:
 - Credentials requested: none.
 - Mission updates requested: Phase 2 report distribution should include a one-page teaser PDF stating it is not the final report and directing readers to `contact@northvalleyintel.com`.
 
-Readiness: pass locally; production verification pending deploy and live Kona Ice rerun.
+Readiness: pass for Generation 36; second clean verification pending.
 
 Two-Pass Verification:
 
-- Generation A result: Generation 36 local gate passed after fix.
-- Generation B result: pending after production deploy/self-QA.
+- Generation A result: Generation 36 local gate and production self-QA passed after fix.
+- Generation B result: pending second clean verification.
 - Code changed between passes: yes.
-- Readiness achieved: no, pending production validation.
+- Readiness achieved: no, pending second clean verification.

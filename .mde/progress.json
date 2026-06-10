@@ -18,7 +18,7 @@
   },
   "recommendation": "founder_review",
   "currentGeneration": 36,
-  "phaseReadiness": "production_timeout_fix_local_gates_passed_deploy_pending",
+  "phaseReadiness": "generation_36_passed_second_clean_verification_pending",
   "latestProductionIssue": "www.kona-ice.com failed because full assessment exceeded Phase 1 Cloudflare runtime watchdog.",
   "latestLocalValidation": {
     "format": "passed",
@@ -29,5 +29,8 @@
     "build": "passed",
     "cloudflareBuild": "passed with documented warnings"
   },
-  "nextReportDistributionRequirement": "Phase 2 one-page teaser PDF must state it is not the final report and direct readers to contact@northvalleyintel.com for the complete report and fixing strategy."
+  "nextReportDistributionRequirement": "Phase 2 one-page teaser PDF must state it is not the final report and direct readers to contact@northvalleyintel.com for the complete report and fixing strategy.",
+  "latestProductionScan": "www-kona-ice-com-1781065534888",
+  "latestProductionScanResult": "completed with partial report, 6 pages crawled, medium evidence confidence, runtime-budget limitation visible, PageSpeed unavailable without invented score",
+  "latestProductionDeployVersion": "52a68705-47ab-4642-b4e2-df4477b1f0e3"
 }

@@ -14,7 +14,7 @@ URL input -> safe public crawl -> signal extraction -> scoring -> report page.
 
 ## Current Readiness
 
-Phase 1 is deployed to staging and production for founder testing, with a new production runtime fix in progress after a large-site timeout failure.
+Phase 1 is deployed to staging and production for founder testing. Generation 36 fixed the production large-site timeout failure by using a bounded Cloudflare assessment profile.
 
 - Staging: `https://staging-assessment.northvalleyintel.com`
 - Production: `https://assessment.northvalleyintel.com`
@@ -24,11 +24,11 @@ Phase 1 is deployed to staging and production for founder testing, with a new pr
 ## Current BDD State
 
 - Current generation: 36
-- Critical unresolved: 0 after local fix; production redeploy/self-QA pending
+- Critical unresolved: 0
 - High unresolved: 0
 - Low deferred: 1
-- Two-pass verification: pending for the new production timeout fix
-- Self-QA gate: local automated checks passed; production Kona Ice rerun pending
+- Two-pass verification: pending second clean verification for the new production timeout fix
+- Self-QA gate: passed for the production Kona Ice rerun
 
 Machine-readable BDD state lives in:
 
@@ -45,9 +45,10 @@ Machine-readable BDD state lives in:
 - Integration tests: 6 passed
 - Build: passed
 - Cloudflare build: passed with documented warnings
-- Latest production validation scan before fix: `www.kona-ice.com`
-- Latest production issue: failed because the assessment exceeded the Phase 1 Cloudflare runtime watchdog.
-- Local fix result: production runtime now uses bounded scan limits so large sites can produce partial reports instead of failing solely due scan duration.
+- Latest production validation scan: `www-kona-ice-com-1781065534888`
+- Latest production scan result: completed with a partial report, 6 pages crawled, medium evidence confidence, visible runtime-budget limitation, and PageSpeed unavailable without an invented score.
+- Report page check: HTTP 200.
+- Production fix result: large sites can now produce truthful partial reports instead of failing solely due scan duration.
 
 ## Known Risks
 
