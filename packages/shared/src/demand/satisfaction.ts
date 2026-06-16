@@ -118,6 +118,89 @@ const sectorServiceTerms = {
     commercial_cleaning: ["commercial cleaning", "office cleaning"],
     recurring_cleaning: ["recurring cleaning", "weekly cleaning", "biweekly cleaning"],
     cost: ["cleaning cost", "cleaning rates", "price", "estimate"]
+  },
+  welding: {
+    mobile_welding: [
+      "mobile welding",
+      "mobile welder",
+      "portable welding",
+      "on site welding",
+      "on-site welding"
+    ],
+    metal_fabrication: [
+      "metal fabrication",
+      "custom fabrication",
+      "steel fabrication",
+      "fabrication"
+    ],
+    gate_railing: ["gate repair", "railing", "handrail", "wrought iron", "metal gate"],
+    trailer_welding: ["trailer welding", "trailer repair", "utility trailer"],
+    aluminum_welding: ["aluminum welding", "tig welding", "stainless welding"],
+    commercial_welding: [
+      "commercial welding",
+      "industrial welding",
+      "structural welding"
+    ],
+    emergency_repair: [
+      "emergency welding",
+      "welding repair",
+      "same day welding",
+      "welding near me open now"
+    ],
+    cost: [
+      "welding cost",
+      "welding price",
+      "welding prices",
+      "welder cost",
+      "estimate",
+      "quote"
+    ]
+  },
+  senior_living: {
+    assisted_living: [
+      "assisted living",
+      "assisted living facility",
+      "assisted living facilities",
+      "senior living",
+      "senior living community",
+      "senior living communities"
+    ],
+    memory_care: ["memory care", "dementia care", "alzheimers care", "alzheimer care"],
+    independent_living: [
+      "independent living",
+      "senior independent living",
+      "retirement community"
+    ],
+    senior_apartments: [
+      "senior apartment",
+      "senior apartments",
+      "senior housing",
+      "55 plus",
+      "55+"
+    ],
+    nursing_home: [
+      "nursing home",
+      "nursing homes",
+      "skilled nursing",
+      "long term care"
+    ],
+    respite_care: ["respite care", "short term care", "temporary care"],
+    cost: [
+      "assisted living cost",
+      "senior living cost",
+      "medicaid",
+      "medicare",
+      "pricing",
+      "rates"
+    ],
+    provider_selection: [
+      "reviews",
+      "best assisted living",
+      "senior living communities",
+      "assisted living facilities",
+      "licensed",
+      "tour"
+    ]
   }
 } as const;
 
@@ -127,7 +210,9 @@ const sectorLabels: Record<DemandSector, string> = {
   pest_control: "Pest Control",
   real_estate: "Real Estate",
   closet_wardrobe_design: "Closet & Wardrobe Design",
-  cleaning: "Cleaning"
+  cleaning: "Cleaning",
+  welding: "Welding",
+  senior_living: "Senior Living"
 };
 
 export type DemandCoverage =
@@ -148,6 +233,8 @@ export type DemandRecordInput = {
   intent: string;
   priority: "high" | "medium" | "low";
   location_modifier: string | null;
+  monthly_searches?: number | null;
+  search_volume_source?: string | null;
   active: boolean;
 };
 
@@ -165,6 +252,8 @@ export type DemandSatisfactionRecord = {
   intent: string;
   priority: "high" | "medium" | "low";
   locationModifier: string | null;
+  monthlySearches: number | null;
+  searchVolumeSource: string | null;
   weight: number;
   coverage: DemandCoverage;
   confidence: "low" | "medium" | "high";
@@ -208,6 +297,8 @@ export type DemandOpportunity = {
   subcategory: string;
   coverage: DemandCoverage;
   confidence: "low" | "medium" | "high";
+  monthlySearches: number | null;
+  searchVolumeSource: string | null;
   whyItMatters: string;
   foundEvidence: DemandEvidence[];
   missingSignals: string[];
@@ -455,6 +546,8 @@ function assessRecord(
     intent: record.intent,
     priority: record.priority,
     locationModifier: record.location_modifier,
+    monthlySearches: normalizeMonthlySearches(record.monthly_searches),
+    searchVolumeSource: record.search_volume_source ?? null,
     weight: priorityWeight[record.priority] ?? 1,
     coverage,
     confidence,
@@ -614,7 +707,10 @@ function summarizeBy(
 function topOpportunities(records: DemandSatisfactionRecord[]): DemandOpportunity[] {
   return records
     .filter((record) => ["not_found", "partial"].includes(record.coverage))
-    .sort((a, b) => b.weight - a.weight)
+    .sort(
+      (a, b) =>
+        b.weight - a.weight || (b.monthlySearches ?? -1) - (a.monthlySearches ?? -1)
+    )
     .slice(0, 5)
     .map((record) => ({
       keyword: record.keyword,
@@ -622,6 +718,8 @@ function topOpportunities(records: DemandSatisfactionRecord[]): DemandOpportunit
       subcategory: record.subcategory,
       coverage: record.coverage,
       confidence: record.confidence,
+      monthlySearches: record.monthlySearches,
+      searchVolumeSource: record.searchVolumeSource,
       whyItMatters: opportunityImpact(record),
       foundEvidence: record.foundEvidence,
       missingSignals: record.missingSignals,
@@ -646,6 +744,10 @@ function opportunityImpact(record: DemandSatisfactionRecord): string {
     return "Provider-selection searches need proof such as reviews, testimonials, licenses, or credentials.";
   }
   return "This customer demand appears in the dataset, but the checked pages did not clearly satisfy it.";
+}
+
+function normalizeMonthlySearches(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function buildFoundSummary(records: DemandSatisfactionRecord[]): string[] {

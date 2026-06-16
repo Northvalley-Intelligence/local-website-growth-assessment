@@ -1,5 +1,5 @@
 {
-  "currentGeneration": 40,
+  "currentGeneration": 42,
   "unresolvedCritical": [],
   "unresolvedHigh": [],
   "deferredLow": [
@@ -17,6 +17,8 @@
     "Generation 37 passed as the second clean verification with no implementation changes. Fresh production scan www-kona-ice-com-1781065942639 completed with partial evidence, medium confidence, runtime-budget limitation visible, and report HTTP 200.",
     "Generation 38 added demand satisfaction by consuming the generated active demand dataset in the assessment app and rendering Customer Demand Fit in reports.",
     "Generation 39 passed as the second clean verification with no implementation changes. Local Medina Clean self-QA showed Cleaning demand satisfaction, found evidence, missing signals, pages checked, and rendered report output.",
-    "Generation 40 deployed demand satisfaction to staging and production. Live Medina Clean self-QA passed in both environments with rendered Customer Demand Fit sections."
+    "Generation 40 deployed demand satisfaction to staging and production. Live Medina Clean self-QA passed in both environments with rendered Customer Demand Fit sections.",
+    "Generation 41 synced the latest active demand artifact from demand-data-generation, including 60 active welding records and 33 records with Keyword Planner monthly search counts. Welding demand satisfaction is now supported locally and monthly counts render in demand opportunities when available.",
+    "Generation 42 synced the latest active demand artifact from demand-data-generation, including 60 active senior living records and 34 senior living records with Keyword Planner monthly search counts. Senior Living demand satisfaction is now supported locally and monthly counts render in demand opportunities when available."
   ]
 }

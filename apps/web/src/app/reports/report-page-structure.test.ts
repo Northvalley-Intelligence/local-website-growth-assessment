@@ -90,6 +90,7 @@ describe("customer-facing report structure", () => {
     expect(source).toContain("report.demandSatisfaction.summary");
     expect(source).toContain("Demand Gaps To Review");
     expect(source).toContain("Demand opportunities with evidence");
+    expect(source).toContain("Estimated monthly searches");
     expect(source).toContain("opportunity.pagesChecked");
     expect(source.indexOf("What We Found")).toBeLessThan(
       source.indexOf("Demand Gaps To Review")

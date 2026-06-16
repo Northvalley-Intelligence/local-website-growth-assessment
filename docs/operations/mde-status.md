@@ -1,6 +1,6 @@
 # MDE Status
 
-Last updated: 2026-06-10
+Last updated: 2026-06-15
 
 ## Current Phase
 
@@ -14,7 +14,7 @@ URL input -> safe public crawl -> signal extraction -> scoring -> report page.
 
 ## Current Readiness
 
-Phase 1 is deployed to staging and production for founder testing. Generation 38 added demand satisfaction to the assessment app by consuming the generated demand dataset from the separate demand-data-generation repository. Generation 39 completed the second clean verification with no implementation changes. Generation 40 deployed the demand satisfaction release to staging and production.
+Phase 1 is deployed to staging and production for founder testing. Generation 38 added demand satisfaction to the assessment app by consuming the generated demand dataset from the separate demand-data-generation repository. Generation 39 completed the second clean verification with no implementation changes. Generation 40 deployed the demand satisfaction release to staging and production. Generation 41 synced the latest active demand artifact locally and added Welding demand support with optional monthly search counts in demand opportunities. Generation 42 synced the latest active demand artifact locally and added Senior Living demand support.
 
 - Staging: `https://staging-assessment.northvalleyintel.com`
 - Production: `https://assessment.northvalleyintel.com`
@@ -23,12 +23,12 @@ Phase 1 is deployed to staging and production for founder testing. Generation 38
 
 ## Current BDD State
 
-- Current generation: 40
+- Current generation: 42
 - Critical unresolved: 0
 - High unresolved: 0
-- Low deferred: 1
+- Low deferred: 2
 - Two-pass verification: passed for demand satisfaction integration in Generations 38 and 39
-- Self-QA gate: passed locally, in staging, and in production for Medina Clean demand satisfaction reports
+- Self-QA gate: passed locally, in staging, and in production for Medina Clean demand satisfaction reports; Generation 41 local validation passed for Welding demand support; Generation 42 local validation passed for Senior Living demand support
 
 Machine-readable BDD state lives in:
 
@@ -36,15 +36,32 @@ Machine-readable BDD state lives in:
 - `.mde/failing-bdds.json`
 - `.mde/generations/`
 
+## Latest MDE Portfolio Sync
+
+- Date: 2026-06-12
+- Scope: artifact-only sync into the central MDE portfolio memory.
+- Product behavior changed: no
+- Mission changed: no
+- Files initialized: `.mde/outbox/portfolio-sync.json`, `.mde/outbox/events.jsonl`, `.mde/outbox/lessons.jsonl`, `.mde/outbox/impacts.jsonl`, `.mde/outbox/content-seeds.jsonl`, and `.mde/outbox/skill-update-candidates.jsonl`
+- Central import target: `../mde`
+- Applicable context packs: `pdf-generation`, `printable-artifacts`, and `ui-forms`
+- Downstream project to monitor: `proposals`
+
 ## Latest Validation
 
 - Format: passed
 - Lint: passed
 - Typecheck: passed
-- Unit tests: 46 passed
+- Unit tests: 49 passed
 - Integration tests: 6 passed
 - Build: passed
-- Cloudflare build: passed with documented warnings
+- Cloudflare build: passed for Generation 42 with documented warnings
+- Generation 41 focused tests: demand satisfaction and report structure passed
+- Generation 41 demand sync: 216 active demand records copied from `demand-data-generation`, including 60 active Welding records and 33 records with Keyword Planner monthly searches
+- Generation 41 report behavior: `Customer Demand Fit` can classify Welding sites, evaluate Welding demand records, and show estimated monthly searches when present
+- Generation 42 focused tests: demand satisfaction and report structure passed
+- Generation 42 demand sync: 276 active demand records copied from `demand-data-generation`, including 60 active Senior Living records and 34 Senior Living records with Keyword Planner monthly searches
+- Generation 42 report behavior: `Customer Demand Fit` can classify Senior Living sites, evaluate Senior Living demand records, and show estimated monthly searches when present
 - Staging deployment: passed, Cloudflare version `bd4f3642-2534-4f94-9f1c-108b14478e8e`
 - Production deployment: passed, Cloudflare version `c3e7273e-1179-4a36-8542-1931fd352c7b`
 - Latest local validation scan: `medinaclean-com-1781067349467`
@@ -62,6 +79,8 @@ Machine-readable BDD state lives in:
 - Dedicated background execution is still needed for stronger production reliability.
 - Production Phase 1 scans intentionally use a smaller bounded crawl profile than local full-report runs. Large sites may receive partial assessments until Phase 2 background execution is available.
 - The consumed demand dataset is currently copied into the assessment app as a release artifact. A later release should automate syncing from the demand-data-generation repository to avoid stale demand inputs.
+- Generation 41 Welding demand support is validated locally but is not deployed to staging or production yet.
+- Generation 42 Senior Living demand support is validated locally but is not deployed to staging or production yet.
 - Demand-sector inference is deterministic and conservative. Unsupported or unclear industries are skipped rather than forced into a misleading demand score.
 - Turbopack tracing warning remains documented as acceptable for Phase 1 only.
 - Authenticated API access, scheduled scans, PDF/shareable reports, and consultation CTA are Phase 2+ work.
