@@ -1,0 +1,80 @@
+{
+  "generation": 41,
+  "phase": "Phase 1",
+  "missionVersion": "2026-06-09-human-agent-deploy-artifact-split",
+  "phaseGoalVersion": "phase-1-complete-vertical-slice",
+  "focus": "Sync latest demand-data-generation active artifact and make welding demand available in assessment reports.",
+  "reasonStarted": "The upstream demand data added a welding sector with Keyword Planner monthly counts for some search terms.",
+  "bddSummary": {
+    "critical": 2,
+    "high": 3,
+    "low": 1
+  },
+  "bddChanges": {
+    "new": [
+      "A welding website should be classified as Welding demand when public page evidence contains welding service terms.",
+      "Welding demand records from the active upstream artifact should be evaluated in Customer Demand Fit.",
+      "Demand opportunities should show estimated monthly searches when Keyword Planner count data is available.",
+      "Demand records with null monthly_searches should continue to render safely without inventing volume.",
+      "Monthly search count should help order opportunities without replacing the existing priority-weighted demand score."
+    ],
+    "reused": [
+      "Generated demand data remains owned by demand-data-generation and consumed as a release artifact.",
+      "Unsupported or unclear website industries skip demand scoring honestly.",
+      "Customer Demand Fit must keep found evidence, missing signals, confidence, and pages checked traceable."
+    ],
+    "removed": [],
+    "modified": []
+  },
+  "implementationSummary": {
+    "filesChanged": [
+      "packages/shared/src/demand/records.ts",
+      "packages/shared/src/demand/satisfaction.ts",
+      "packages/shared/src/demand/satisfaction.test.ts",
+      "apps/web/src/app/reports/[id]/page.tsx",
+      "apps/web/src/app/reports/report-page-structure.test.ts"
+    ],
+    "componentsChanged": [
+      "Demand data release artifact",
+      "Demand sector inference",
+      "Demand opportunity scoring and ordering",
+      "Customer report demand opportunity rendering"
+    ],
+    "architecturalChanges": [
+      "Added welding as a supported demand sector in the assessment app.",
+      "Exposed optional monthly search volume in demand records and opportunities while keeping null volume safe."
+    ]
+  },
+  "dataSync": {
+    "source": "../demand-data-generation/data/json/demand-intelligence-v0.1.0.active.json",
+    "activeRecords": 216,
+    "activeWeldingRecords": 60,
+    "recordsWithMonthlySearches": 33,
+    "sourceValidation": "../demand-data-generation/.mde/validation-runs/VAL-welding-search-demand-sector-2026-06-14.json"
+  },
+  "validation": {
+    "format": "passed",
+    "lint": "passed",
+    "typecheck": "passed",
+    "unitTests": "48 passed",
+    "integrationTests": "6 passed",
+    "build": "passed with existing documented Turbopack tracing warning",
+    "focusedTests": [
+      "packages/shared/src/demand/satisfaction.test.ts",
+      "apps/web/src/app/reports/report-page-structure.test.ts"
+    ],
+    "cloudflareBuild": "passed with existing documented OpenNext tsconfig warning",
+    "deployment": "not deployed"
+  },
+  "outcome": "passed_local_validation",
+  "failureReasons": {
+    "critical": [],
+    "high": []
+  },
+  "readiness": "ready_for_staging_deployment_when_branch_policy_and_release_gate_are_followed",
+  "knownRisks": [
+    "The assessment app still consumes demand data by copied release artifact; automated upstream sync remains deferred.",
+    "Monthly search counts are available only for some welding terms and are displayed only when present.",
+    "Production and staging will not include this change until it is committed, pushed to the correct branch, and deployed through the release gate."
+  ]
+}

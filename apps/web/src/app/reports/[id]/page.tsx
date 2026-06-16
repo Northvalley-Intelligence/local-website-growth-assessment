@@ -192,6 +192,16 @@ export default async function ReportPage({
                             Coverage: {coverageLabel(opportunity.coverage)}. Confidence:{" "}
                             {opportunity.confidence}.
                           </p>
+                          {opportunity.monthlySearches !== null ? (
+                            <p>
+                              Estimated monthly searches:{" "}
+                              {opportunity.monthlySearches.toLocaleString()}
+                              {opportunity.searchVolumeSource
+                                ? ` (${volumeSourceLabel(opportunity.searchVolumeSource)})`
+                                : ""}
+                              .
+                            </p>
+                          ) : null}
                           {opportunity.foundEvidence.length > 0 ? (
                             <>
                               <p>
@@ -584,4 +594,10 @@ function scoreClass(
 
 function coverageLabel(coverage: string): string {
   return coverage.replace(/_/g, " ");
+}
+
+function volumeSourceLabel(source: string): string {
+  if (source === "keyword_planner") return "Keyword Planner";
+  if (source === "unknown") return "source unknown";
+  return source.replace(/_/g, " ");
 }

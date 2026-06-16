@@ -1,0 +1,100 @@
+{
+  "project_id": "local-website-growth-assessment",
+  "project_name": "Local Website Growth Assessment",
+  "organization": "North Valley Intel",
+  "sync_status": "ready_for_central_import",
+  "synced_at": "2026-06-12T20:53:35-04:00",
+  "source_prompt": "../mde/prompts/existing-mde-open-session-sync.prompt.md",
+  "mission": {
+    "summary": "Help local business owners understand why their website may not be generating more local customers by safely analyzing public website evidence and producing plain-English recommendations.",
+    "current_phase": "Phase 1: Complete Vertical Slice",
+    "current_phase_goal": "Phase 1 production founder testing with website-specific demand satisfaction added to customer reports.",
+    "phase_readiness": "ready_for_founder_testing",
+    "current_generation": 40,
+    "mission_version": "2026-06-09-human-agent-deploy-artifact-split",
+    "phase_goal_version": "phase-1-complete-vertical-slice"
+  },
+  "portfolio_profile": {
+    "type": "product",
+    "status": "active",
+    "mde_status": "active_existing_project",
+    "migration_priority": 2,
+    "business_role": "Consumes demand data and produces website quality and growth assessment reports.",
+    "owner": "Ferosh",
+    "confidentiality": "private",
+    "primary_artifacts": ["assessment reports", "lead-readiness reports"],
+    "artifact_profiles": [
+      "report_generation",
+      "data_contract",
+      "client_facing_document",
+      "pdf_generation",
+      "web_ui",
+      "form_workflow"
+    ],
+    "context_packs": ["pdf-generation", "printable-artifacts", "ui-forms"],
+    "validation_strategy_status": "legacy_mde_artifacts_present; central_validation_strategy_file_not_present",
+    "central_mde_sync_status": "local_outbox_initialized"
+  },
+  "dependencies": {
+    "upstream": [
+      {
+        "project_id": "demand-data-generation",
+        "type": "data_contract",
+        "risk_level": "high",
+        "validation_needed": ["schema compatibility", "sample report generation"]
+      }
+    ],
+    "downstream": [
+      {
+        "project_id": "proposals",
+        "type": "report_input",
+        "risk_level": "high",
+        "validation_needed": ["proposal regeneration", "formatting validation"]
+      }
+    ]
+  },
+  "latest_validation": {
+    "latest_generation": 40,
+    "unresolved_critical": 0,
+    "unresolved_high": 0,
+    "deferred_low_count": 2,
+    "two_pass_verification": "passed for demand satisfaction integration in Generations 38 and 39",
+    "deployment": {
+      "staging": {
+        "branch": "staging",
+        "url": "https://staging-assessment.northvalleyintel.com",
+        "result": "passed"
+      },
+      "production": {
+        "branch": "main",
+        "url": "https://assessment.northvalleyintel.com",
+        "result": "passed"
+      }
+    }
+  },
+  "applicable_learning_check": {
+    "artifact_type_touched": "MDE sync metadata and portfolio outbox records",
+    "context_packs_apply": ["pdf-generation", "printable-artifacts", "ui-forms"],
+    "prior_issue_signatures_apply": [
+      "PDF_TEXT_OVERFLOW_MARGIN",
+      "FORM_DATA_LOST_ON_VALIDATION_FAILURE",
+      "FAKE_BUTTON_OR_DEAD_ACTION"
+    ],
+    "validators_or_checks_for_next_generation": [
+      "schema compatibility against demand-data-generation output",
+      "sample report generation for supported local-service sectors",
+      "PDF safe-margin and page-break checks before Phase 2 export readiness",
+      "form data preservation and field-specific error recovery checks",
+      "affordance integrity check for report CTA/share/export actions"
+    ],
+    "downstream_repos_potentially_affected": ["proposals"]
+  },
+  "central_import_recommendation": {
+    "import_into": [
+      "../mde/portfolio/PROJECTS.yaml",
+      "../mde/ledger/events.jsonl",
+      "../mde/knowledge/issue-signatures.jsonl only if new repeatable signatures are later discovered"
+    ],
+    "notes": "This sync initializes local outbox records for an already-MDE repo. It does not change product behavior or phase readiness."
+  }
+}

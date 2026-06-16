@@ -63,4 +63,102 @@ describe("demand satisfaction", () => {
         (opportunity?.foundEvidence.length ?? 0) > 0
     ).toBe(true);
   });
+
+  it("assesses welding demand from the synced demand dataset", () => {
+    const report = assessDemandSatisfaction({
+      websiteEvidence: {
+        pages: [
+          {
+            url: "https://welder.example/",
+            title: "Mobile Welding and Metal Fabrication in Marietta",
+            text: "We provide mobile welding, metal fabrication, aluminum welding, trailer repair, gate repair, emergency welding repair, estimates, and commercial welding for local customers."
+          }
+        ]
+      }
+    });
+
+    expect(report.status).toBe("assessed");
+    expect(report.sector).toBe("welding");
+    expect(report.sectorLabel).toBe("Welding");
+    expect(report.demandRecordsEvaluated).toBeGreaterThanOrEqual(60);
+    expect(report.score).not.toBeNull();
+    expect(report.records.some((record) => record.monthlySearches !== null)).toBe(true);
+  });
+
+  it("assesses senior living demand from the synced demand dataset", () => {
+    const report = assessDemandSatisfaction({
+      websiteEvidence: {
+        pages: [
+          {
+            url: "https://seniorliving.example/",
+            title: "Assisted Living and Memory Care in Marietta",
+            text: "Our senior living community provides assisted living, memory care, independent living, respite care, senior apartments, nursing support, tours, pricing guidance, and Medicaid planning for families."
+          }
+        ]
+      }
+    });
+
+    expect(report.status).toBe("assessed");
+    expect(report.sector).toBe("senior_living");
+    expect(report.sectorLabel).toBe("Senior Living");
+    expect(report.demandRecordsEvaluated).toBeGreaterThanOrEqual(60);
+    expect(report.score).not.toBeNull();
+    expect(report.records.some((record) => record.monthlySearches !== null)).toBe(true);
+    expect(
+      report.opportunities.some((opportunity) => opportunity.monthlySearches !== null)
+    ).toBe(true);
+  });
+
+  it("carries monthly search counts into demand opportunities when available", () => {
+    const report = assessDemandSatisfaction({
+      websiteEvidence: {
+        pages: [
+          {
+            url: "https://welder.example/",
+            title: "Mobile Welding",
+            text: "Mobile welding and emergency welding repair for local customers."
+          }
+        ]
+      },
+      demandRecords: [
+        {
+          id: "welding-cost-priced-opportunity",
+          sector: "welding",
+          subcategory: "cost",
+          keyword: "mobile welding near me prices",
+          normalized_keyword: "mobile welding near me prices",
+          intent: "Cost / Pricing",
+          priority: "high",
+          location_modifier: "near me",
+          monthly_searches: 70,
+          search_volume_source: "keyword_planner",
+          active: true
+        },
+        {
+          id: "welding-cost-legacy-null-volume",
+          sector: "welding",
+          subcategory: "cost",
+          keyword: "cheap mobile welders near me prices",
+          normalized_keyword: "cheap mobile welders near me prices",
+          intent: "Cost / Pricing",
+          priority: "high",
+          location_modifier: "near me",
+          monthly_searches: null,
+          search_volume_source: "unknown",
+          active: true
+        }
+      ]
+    });
+
+    expect(report.status).toBe("assessed");
+    expect(report.opportunities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          keyword: "mobile welding near me prices",
+          monthlySearches: 70,
+          searchVolumeSource: "keyword_planner"
+        })
+      ])
+    );
+  });
 });
