@@ -14,7 +14,7 @@ URL input -> safe public crawl -> signal extraction -> scoring -> report page.
 
 ## Current Readiness
 
-Phase 1 is deployed to staging and production for founder testing. Generation 38 added demand satisfaction to the assessment app by consuming the generated demand dataset from the separate demand-data-generation repository. Generation 39 completed the second clean verification with no implementation changes. Generation 40 deployed the demand satisfaction release to staging and production. Generation 41 synced the latest active demand artifact and added Welding demand support with optional monthly search counts in demand opportunities. Generation 42 synced the latest active demand artifact, added Senior Living demand support, and deployed the updated demand data to staging and production. Generation 43 updated the public README to explain how the project uses Mission-Driven Engineering.
+Phase 1 is deployed to staging and production for founder testing. Generation 38 added demand satisfaction to the assessment app by consuming the generated demand dataset from the separate demand-data-generation repository. Generation 39 completed the second clean verification with no implementation changes. Generation 40 deployed the demand satisfaction release to staging and production. Generation 41 synced the latest active demand artifact and added Welding demand support with optional monthly search counts in demand opportunities. Generation 42 synced the latest active demand artifact, added Senior Living demand support, and deployed the updated demand data to staging and production. Generation 43 updated the public README to explain how the project uses Mission-Driven Engineering and verified the GitHub repository is public.
 
 - Staging: `https://staging-assessment.northvalleyintel.com`
 - Production: `https://assessment.northvalleyintel.com`
@@ -74,6 +74,7 @@ Machine-readable BDD state lives in:
 - Demand integration result: generated demand records remain owned by `demand-data-generation`; this app consumes the active dataset and evaluates how the specific website satisfies observable demand.
 - Generation 43 public-readiness result: README now explains the mission, MDE artifact lanes, generations, validation, demand data contracts, and deployment discipline for a public GitHub audience.
 - Generation 43 public-readiness scan: no committed private env files were found; `.env.example` contains only an empty `PAGESPEED_API_KEY` placeholder; no common private key, token, Cloudflare token, admin secret, or concrete PageSpeed key pattern was found in tracked files.
+- Generation 43 GitHub visibility: public, verified for `Northvalley-Intelligence/local-website-growth-assessment`.
 
 ## Known Risks
 
