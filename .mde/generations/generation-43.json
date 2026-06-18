@@ -3,7 +3,7 @@
   "phase": "Phase 1",
   "missionVersion": "2026-06-09-human-agent-deploy-artifact-split",
   "phaseGoalVersion": "phase-1-complete-vertical-slice",
-  "focus": "Prepare repository for public GitHub visibility with an MDE-focused README and public-readiness checks.",
+  "focus": "Prepare repository for public GitHub visibility with an MDE-focused README and public-readiness checks, then verify public visibility.",
   "reasonStarted": "The founder asked to commit and push current changes, update the README to explain MDE concepts, and make the GitHub repository public.",
   "bddSummary": {
     "critical": 1,
@@ -47,9 +47,10 @@
     "secretScan": "No private key, common token, Cloudflare token, admin secret, or concrete PageSpeed API key pattern found in tracked files. .env.example contains only an empty PAGESPEED_API_KEY placeholder.",
     "format": "passed",
     "productTests": "not rerun because this generation changes documentation and metadata only",
-    "deployment": "not deployed"
+    "deployment": "not deployed",
+    "githubVisibility": "public verified via GitHub CLI"
   },
-  "outcome": "ready_for_public_visibility_after_commit_and_push",
+  "outcome": "public_visibility_enabled_and_verified",
   "failureReasons": {
     "critical": [],
     "high": []
