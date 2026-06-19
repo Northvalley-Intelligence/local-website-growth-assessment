@@ -109,6 +109,26 @@ describe("demand satisfaction", () => {
     ).toBe(true);
   });
 
+  it("carries synced real estate Keyword Planner counts into demand records", () => {
+    const report = assessDemandSatisfaction({
+      websiteEvidence: {
+        pages: [
+          {
+            url: "https://realestate.example/",
+            title: "Marietta Real Estate Agent",
+            text: "We help buyers find homes for sale, help owners sell your home, provide home value guidance, relocation support, neighborhood guides, and listing agent services."
+          }
+        ]
+      }
+    });
+
+    expect(report.status).toBe("assessed");
+    expect(report.sector).toBe("real_estate");
+    expect(report.sectorLabel).toBe("Real Estate");
+    expect(report.demandRecordsEvaluated).toBeGreaterThanOrEqual(290);
+    expect(report.records.some((record) => record.monthlySearches !== null)).toBe(true);
+  });
+
   it("carries monthly search counts into demand opportunities when available", () => {
     const report = assessDemandSatisfaction({
       websiteEvidence: {
