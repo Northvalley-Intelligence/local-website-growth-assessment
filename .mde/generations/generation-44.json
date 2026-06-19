@@ -88,16 +88,32 @@
       "apps/web/src/app/reports/report-page-structure.test.ts"
     ],
     "builtPackageSmoke": "Real Estate assessed with 290 records evaluated, 147 monthly-count records, and monthly-search opportunities available.",
-    "deployment": "not deployed yet"
+    "deployment": {
+      "staging": {
+        "branch": "staging",
+        "commit": "aa1521d",
+        "version": "c25c4775-3b6f-4de6-a243-61a21a7ae85a",
+        "selfQaScan": "houseofmodernrealty-com-1781871484548",
+        "result": "passed",
+        "selfQaSummary": "Completed with 8 pages crawled, high evidence confidence, Real Estate demand satisfaction, 290 records evaluated, 147 monthly-count records, and 5 monthly-search opportunities."
+      },
+      "production": {
+        "branch": "main",
+        "commit": "a05bc24",
+        "version": "2758758c-5460-4a06-8c37-981f48a922c9",
+        "selfQaScan": "houseofmodernrealty-com-1781871905812",
+        "result": "passed",
+        "selfQaSummary": "Completed with 8 pages crawled, high evidence confidence, Real Estate demand satisfaction, 290 records evaluated, 147 monthly-count records, and 5 monthly-search opportunities."
+      }
+    }
   },
-  "outcome": "passed_local_validation",
+  "outcome": "deployed_and_verified",
   "failureReasons": {
     "critical": [],
     "high": []
   },
-  "readiness": "ready_for_staging_deployment_when_branch_policy_and_release_gate_are_followed",
+  "readiness": "deployed_and_verified",
   "knownRisks": [
-    "The assessment app still consumes demand data by copied release artifact; automated upstream sync remains deferred.",
-    "Production and staging will not include this change until it is committed, pushed to the correct branch, and deployed through the release gate."
+    "The assessment app still consumes demand data by copied release artifact; automated upstream sync remains deferred."
   ]
 }

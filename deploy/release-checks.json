@@ -21,20 +21,20 @@
     "OpenNext generated bundle warning about ../../tsconfig.base.json."
   ],
   "latestRelease": {
-    "date": "2026-06-15",
-    "commit": "dc44498",
+    "date": "2026-06-19",
+    "commit": "a05bc24",
     "staging": {
       "branch": "staging",
-      "commit": "1de9fdf",
-      "version": "38e03311-3b70-49df-8c4e-e25e2c70a930",
-      "selfQaScan": "www-winnwoodretire-com-1781581149957",
+      "commit": "aa1521d",
+      "version": "c25c4775-3b6f-4de6-a243-61a21a7ae85a",
+      "selfQaScan": "houseofmodernrealty-com-1781871484548",
       "result": "passed"
     },
     "production": {
       "branch": "main",
-      "commit": "dc44498",
-      "version": "965b3248-eeff-4467-9778-a3330bb564b6",
-      "selfQaScan": "www-winnwoodretire-com-1781581394424",
+      "commit": "a05bc24",
+      "version": "2758758c-5460-4a06-8c37-981f48a922c9",
+      "selfQaScan": "houseofmodernrealty-com-1781871905812",
       "result": "passed"
     }
   }
