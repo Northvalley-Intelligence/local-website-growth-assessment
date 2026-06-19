@@ -1,12 +1,12 @@
 {
   "phase": "Phase 1",
   "status": "ready_for_founder_testing",
-  "lastGeneration": 40,
+  "lastGeneration": 44,
   "automatedGate": {
     "format": "pass",
     "lint": "pass",
     "typecheck": "pass",
-    "unitTests": "46 passed",
+    "unitTests": "50 passed",
     "integrationTests": "6 passed",
     "build": "pass",
     "cloudflareBuild": "pass_with_documented_warnings"
@@ -17,14 +17,14 @@
     "latestProductionScanResult": "completed with 11 pages, high evidence confidence, PageSpeed failed honestly, Performance unavailable"
   },
   "recommendation": "founder_review",
-  "currentGeneration": 40,
+  "currentGeneration": 44,
   "phaseReadiness": "ready_for_founder_testing",
   "latestProductionIssue": "No unresolved Critical or High issue after demand satisfaction deployment self-QA.",
   "latestLocalValidation": {
     "format": "passed",
     "lint": "passed",
     "typecheck": "passed",
-    "unitTests": "46 passed",
+    "unitTests": "50 passed",
     "integrationTests": "6 passed",
     "build": "passed",
     "cloudflareBuild": "passed with documented warnings"
@@ -38,5 +38,56 @@
   "latestProductionScanResult": "completed with 7 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, PageSpeed unavailable without invented score, rendered demand section present",
   "latestStagingDeployVersion": "bd4f3642-2534-4f94-9f1c-108b14478e8e",
   "latestProductionDeployVersion": "c3e7273e-1179-4a36-8542-1931fd352c7b",
-  "twoPassVerification": "passed for demand satisfaction integration: Generation 38 + Generation 39; Generation 40 deployed and live self-QA passed"
+  "twoPassVerification": "passed for demand satisfaction integration: Generation 38 + Generation 39; Generation 40 deployed and live self-QA passed",
+  "latestDemandSync": {
+    "generation": 44,
+    "source": "/Users/feroshjacob/code/demand-data-generation/data/json/demand-intelligence-v0.1.0.active.json",
+    "activeRecords": 540,
+    "recordsWithMonthlySearches": 214,
+    "sectorCounts": {
+      "cleaning": {
+        "records": 26,
+        "monthlySearchRecords": 0
+      },
+      "closet_wardrobe_design": {
+        "records": 26,
+        "monthlySearchRecords": 0
+      },
+      "hvac": {
+        "records": 26,
+        "monthlySearchRecords": 0
+      },
+      "pest_control": {
+        "records": 26,
+        "monthlySearchRecords": 0
+      },
+      "real_estate": {
+        "records": 290,
+        "monthlySearchRecords": 147
+      },
+      "roofing": {
+        "records": 26,
+        "monthlySearchRecords": 0
+      },
+      "senior_living": {
+        "records": 60,
+        "monthlySearchRecords": 34
+      },
+      "welding": {
+        "records": 60,
+        "monthlySearchRecords": 33
+      }
+    },
+    "localValidation": {
+      "format": "passed",
+      "lint": "passed",
+      "typecheck": "passed",
+      "unitTests": "50 passed",
+      "integrationTests": "6 passed",
+      "build": "passed",
+      "cloudflareBuild": "passed with documented warnings on rerun",
+      "builtPackageSmoke": "Real Estate assessed with 290 records evaluated, 147 monthly-count records, and monthly-search opportunities available"
+    },
+    "deployment": "not_deployed_yet"
+  }
 }
