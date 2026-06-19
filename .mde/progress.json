@@ -32,12 +32,12 @@
   "nextReportDistributionRequirement": "Phase 2 one-page teaser PDF must state it is not the final report and direct readers to contact@northvalleyintel.com for the complete report and fixing strategy.",
   "latestLocalScan": "medinaclean-com-1781067349467",
   "latestLocalScanResult": "completed with 11 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, demand report section rendered with found evidence, missing signals, and pages checked",
-  "latestStagingScan": "medinaclean-com-1781068904431",
-  "latestStagingScanResult": "completed with 7 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, PageSpeed unavailable without invented score, rendered demand section present",
-  "latestProductionScan": "medinaclean-com-1781069250781",
-  "latestProductionScanResult": "completed with 7 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, PageSpeed unavailable without invented score, rendered demand section present",
-  "latestStagingDeployVersion": "bd4f3642-2534-4f94-9f1c-108b14478e8e",
-  "latestProductionDeployVersion": "c3e7273e-1179-4a36-8542-1931fd352c7b",
+  "latestStagingScan": "houseofmodernrealty-com-1781871484548",
+  "latestStagingScanResult": "completed with 8 pages crawled, high evidence confidence, Real Estate demand satisfaction assessed, 290 demand records evaluated, and 147 monthly-count records available",
+  "latestProductionScan": "houseofmodernrealty-com-1781871905812",
+  "latestProductionScanResult": "completed with 8 pages crawled, high evidence confidence, Real Estate demand satisfaction assessed, 290 demand records evaluated, and 147 monthly-count records available",
+  "latestStagingDeployVersion": "c25c4775-3b6f-4de6-a243-61a21a7ae85a",
+  "latestProductionDeployVersion": "2758758c-5460-4a06-8c37-981f48a922c9",
   "twoPassVerification": "passed for demand satisfaction integration: Generation 38 + Generation 39; Generation 40 deployed and live self-QA passed",
   "latestDemandSync": {
     "generation": 44,
@@ -88,6 +88,21 @@
       "cloudflareBuild": "passed with documented warnings on rerun",
       "builtPackageSmoke": "Real Estate assessed with 290 records evaluated, 147 monthly-count records, and monthly-search opportunities available"
     },
-    "deployment": "not_deployed_yet"
+    "deployment": {
+      "staging": {
+        "branch": "staging",
+        "commit": "aa1521d",
+        "version": "c25c4775-3b6f-4de6-a243-61a21a7ae85a",
+        "selfQaScan": "houseofmodernrealty-com-1781871484548",
+        "result": "passed"
+      },
+      "production": {
+        "branch": "main",
+        "commit": "a05bc24",
+        "version": "2758758c-5460-4a06-8c37-981f48a922c9",
+        "selfQaScan": "houseofmodernrealty-com-1781871905812",
+        "result": "passed"
+      }
+    }
   }
 }
