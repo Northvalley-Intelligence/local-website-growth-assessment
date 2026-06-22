@@ -1,6 +1,6 @@
 # MDE Status
 
-Last updated: 2026-06-19
+Last updated: 2026-06-22
 
 ## Current Phase
 
@@ -14,7 +14,7 @@ URL input -> safe public crawl -> signal extraction -> scoring -> report page.
 
 ## Current Readiness
 
-Phase 1 is deployed to staging and production for founder testing. Generation 38 added demand satisfaction to the assessment app by consuming the generated demand dataset from the separate demand-data-generation repository. Generation 39 completed the second clean verification with no implementation changes. Generation 40 deployed the demand satisfaction release to staging and production. Generation 41 synced the latest active demand artifact and added Welding demand support with optional monthly search counts in demand opportunities. Generation 42 synced the latest active demand artifact, added Senior Living demand support, and deployed the updated demand data to staging and production. Generation 43 updated the public README to explain how the project uses Mission-Driven Engineering and verified the GitHub repository is public. Generation 44 synced the latest active demand artifact after the Google Keyword Planner data update and deployed it to staging and production; the app now carries 540 active demand records and 214 records with monthly search counts, including expanded Real Estate demand coverage.
+Phase 1 is deployed to staging and production for founder testing. Generation 38 added demand satisfaction to the assessment app by consuming the generated demand dataset from the separate demand-data-generation repository. Generation 39 completed the second clean verification with no implementation changes. Generation 40 deployed the demand satisfaction release to staging and production. Generation 41 synced the latest active demand artifact and added Welding demand support with optional monthly search counts in demand opportunities. Generation 42 synced the latest active demand artifact, added Senior Living demand support, and deployed the updated demand data to staging and production. Generation 43 updated the public README to explain how the project uses Mission-Driven Engineering and verified the GitHub repository is public. Generation 44 synced the latest active demand artifact after the Google Keyword Planner data update and deployed it to staging and production. Generation 45 synced the latest active demand artifact locally; the app now carries 929 active demand records and 271 records with monthly search counts, including expanded Cleaning coverage and new Restoration & Remediation coverage. Generation 45 deployment is pending.
 
 - Staging: `https://staging-assessment.northvalleyintel.com`
 - Production: `https://assessment.northvalleyintel.com`
@@ -23,12 +23,12 @@ Phase 1 is deployed to staging and production for founder testing. Generation 38
 
 ## Current BDD State
 
-- Current generation: 44
+- Current generation: 45
 - Critical unresolved: 0
 - High unresolved: 0
 - Low deferred: 2
 - Two-pass verification: passed for demand satisfaction integration in Generations 38 and 39
-- Self-QA gate: passed locally, in staging, and in production for Medina Clean demand satisfaction reports; Generation 41 local validation passed for Welding demand support; Generation 42 local, staging, and production validation passed for Senior Living demand support; Generation 44 local, staging, and production validation passed for the latest Keyword Planner demand sync
+- Self-QA gate: passed locally, in staging, and in production for Medina Clean demand satisfaction reports; Generation 41 local validation passed for Welding demand support; Generation 42 local, staging, and production validation passed for Senior Living demand support; Generation 44 local, staging, and production validation passed for the previous Keyword Planner demand sync; Generation 45 local validation passed for the latest active demand sync
 
 Machine-readable BDD state lives in:
 
@@ -52,10 +52,10 @@ Machine-readable BDD state lives in:
 - Format: passed
 - Lint: passed
 - Typecheck: passed
-- Unit tests: 50 passed
+- Unit tests: 52 passed
 - Integration tests: 6 passed
 - Build: passed
-- Cloudflare build: passed for Generation 44 on rerun with documented warnings
+- Cloudflare build: passed for Generation 45 with documented warnings
 - Generation 41 focused tests: demand satisfaction and report structure passed
 - Generation 41 demand sync: 216 active demand records copied from `demand-data-generation`, including 60 active Welding records and 33 records with Keyword Planner monthly searches
 - Generation 41 report behavior: `Customer Demand Fit` can classify Welding sites, evaluate Welding demand records, and show estimated monthly searches when present
@@ -68,6 +68,11 @@ Machine-readable BDD state lives in:
 - Generation 44 built-package smoke check: Real Estate assessed with 290 records evaluated, 147 monthly-count records, and monthly-search opportunities available
 - Generation 44 staging deployment: passed from `staging` commit `aa1521d`, Cloudflare version `c25c4775-3b6f-4de6-a243-61a21a7ae85a`
 - Generation 44 production deployment: passed from `main` commit `a05bc24`, Cloudflare version `2758758c-5460-4a06-8c37-981f48a922c9`
+- Generation 45 focused tests: demand satisfaction passed
+- Generation 45 demand sync: 929 active demand records copied from `demand-data-generation`, including 177 Cleaning records with 48 Keyword Planner monthly-count records and 238 Restoration & Remediation records with 9 monthly-count records
+- Generation 45 report behavior: `Customer Demand Fit` can classify Restoration & Remediation sites, evaluate 238 demand records, and continue showing monthly-search evidence when present
+- Generation 45 built-package smoke check: Cleaning assessed with 177 records and 48 monthly-count records; Restoration & Remediation assessed with 238 records and 9 monthly-count records
+- Generation 45 deployment status: not deployed yet; staging and production need branch-policy deploys before hosted assessments use this dataset
 - Latest local validation scan: `medinaclean-com-1781067349467`
 - Latest local scan result: completed with 11 pages crawled, high evidence confidence, PageSpeed measured, demand satisfaction assessed as Cleaning demand, and demand opportunities rendered with pages checked, found evidence, and missing signals.
 - Latest staging validation scan: `houseofmodernrealty-com-1781871484548`
@@ -86,7 +91,7 @@ Machine-readable BDD state lives in:
 - Dedicated background execution is still needed for stronger production reliability.
 - Production Phase 1 scans intentionally use a smaller bounded crawl profile than local full-report runs. Large sites may receive partial assessments until Phase 2 background execution is available.
 - The consumed demand dataset is currently copied into the assessment app as a release artifact. A later release should automate syncing from the demand-data-generation repository to avoid stale demand inputs.
-- Generation 44 demand support is deployed. Future sector updates still require manual artifact sync until automated publishing is added.
+- Generation 44 demand support is deployed. Generation 45 demand support is locally validated but not deployed yet. Future sector updates still require manual artifact sync until automated publishing is added.
 - Demand-sector inference is deterministic and conservative. Unsupported or unclear industries are skipped rather than forced into a misleading demand score.
 - Turbopack tracing warning remains documented as acceptable for Phase 1 only.
 - Authenticated API access, scheduled scans, PDF/shareable reports, and consultation CTA are Phase 2+ work.
