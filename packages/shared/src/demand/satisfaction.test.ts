@@ -129,6 +129,46 @@ describe("demand satisfaction", () => {
     expect(report.records.some((record) => record.monthlySearches !== null)).toBe(true);
   });
 
+  it("carries expanded cleaning city Keyword Planner counts into demand records", () => {
+    const report = assessDemandSatisfaction({
+      websiteEvidence: {
+        pages: [
+          {
+            url: "https://cleaner.example/",
+            title: "Marietta House Cleaning and Maid Service",
+            text: "We provide house cleaning, maid service, deep cleaning, move out cleaning, office cleaning, apartment cleaning, recurring cleaning, estimates, and reviews across Marietta and Smyrna."
+          }
+        ]
+      }
+    });
+
+    expect(report.status).toBe("assessed");
+    expect(report.sector).toBe("cleaning");
+    expect(report.sectorLabel).toBe("Cleaning");
+    expect(report.demandRecordsEvaluated).toBeGreaterThanOrEqual(177);
+    expect(report.records.some((record) => record.monthlySearches !== null)).toBe(true);
+  });
+
+  it("assesses restoration and remediation demand from the synced demand dataset", () => {
+    const report = assessDemandSatisfaction({
+      websiteEvidence: {
+        pages: [
+          {
+            url: "https://restoration.example/",
+            title: "Marietta Water Damage Restoration and Mold Remediation",
+            text: "We provide emergency water removal, water damage restoration, fire damage restoration, smoke damage cleanup, mold remediation, crawl space moisture control, storm damage cleanup, insurance claim support, estimates, and certified restoration service in Marietta."
+          }
+        ]
+      }
+    });
+
+    expect(report.status).toBe("assessed");
+    expect(report.sector).toBe("restoration_remediation");
+    expect(report.sectorLabel).toBe("Restoration & Remediation");
+    expect(report.demandRecordsEvaluated).toBeGreaterThanOrEqual(238);
+    expect(report.records.some((record) => record.monthlySearches !== null)).toBe(true);
+  });
+
   it("carries monthly search counts into demand opportunities when available", () => {
     const report = assessDemandSatisfaction({
       websiteEvidence: {

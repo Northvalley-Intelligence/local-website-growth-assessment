@@ -64,6 +64,17 @@ const intentRules: Record<
       "award"
     ]
   },
+  "Maintenance / Prevention": {
+    label: "maintenance or prevention guidance",
+    terms: [
+      "maintenance",
+      "prevention",
+      "prevent",
+      "inspection",
+      "moisture control",
+      "encapsulation"
+    ]
+  },
   Financing: {
     label: "payment or financing option",
     terms: ["financing", "payment plan", "monthly payment", "pay over time"]
@@ -201,6 +212,59 @@ const sectorServiceTerms = {
       "licensed",
       "tour"
     ]
+  },
+  restoration_remediation: {
+    water_damage_restoration: [
+      "water damage restoration",
+      "water damage cleanup",
+      "flood cleanup",
+      "flood damage",
+      "restoration"
+    ],
+    emergency_water_removal: [
+      "emergency water removal",
+      "water extraction",
+      "emergency water extraction",
+      "water removal"
+    ],
+    fire_damage_restoration: [
+      "fire damage restoration",
+      "smoke damage restoration",
+      "fire restoration",
+      "smoke damage"
+    ],
+    mold_remediation: [
+      "mold remediation",
+      "mold removal",
+      "mold inspection",
+      "mold cleanup"
+    ],
+    storm_damage: [
+      "storm damage",
+      "storm damage restoration",
+      "storm cleanup",
+      "wind damage"
+    ],
+    crawl_space_moisture: [
+      "crawl space moisture",
+      "crawl space encapsulation",
+      "moisture control",
+      "crawl space repair"
+    ],
+    provider_selection: [
+      "restoration company",
+      "restoration companies",
+      "certified",
+      "licensed",
+      "insured",
+      "reviews"
+    ],
+    insurance_claim_support: [
+      "insurance claim",
+      "insurance claims",
+      "insurance support",
+      "claim support"
+    ]
   }
 } as const;
 
@@ -212,7 +276,8 @@ const sectorLabels: Record<DemandSector, string> = {
   closet_wardrobe_design: "Closet & Wardrobe Design",
   cleaning: "Cleaning",
   welding: "Welding",
-  senior_living: "Senior Living"
+  senior_living: "Senior Living",
+  restoration_remediation: "Restoration & Remediation"
 };
 
 export type DemandCoverage =
