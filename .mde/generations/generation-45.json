@@ -93,16 +93,32 @@
       "cleaning": "Cleaning assessed with 177 records evaluated, 48 monthly-count records, and monthly-search opportunities available.",
       "restoration_remediation": "Restoration & Remediation assessed with 238 records evaluated and 9 monthly-count records available."
     },
-    "deployment": "not deployed yet"
+    "deployment": {
+      "staging": {
+        "branch": "staging",
+        "commit": "08f20be",
+        "version": "a4ae3a52-a573-4277-a52a-539917944682",
+        "selfQaScan": "medinaclean-com-1782107097170",
+        "result": "passed",
+        "selfQaSummary": "Completed with 8 pages crawled, high evidence confidence, Cleaning demand satisfaction, 177 records evaluated, 48 monthly-count records, and 5 monthly-search opportunities."
+      },
+      "production": {
+        "branch": "main",
+        "commit": "a519075",
+        "version": "0a5a68ee-a6d6-4ac9-80ab-eaf333b85ed0",
+        "selfQaScan": "medinaclean-com-1782107350417",
+        "result": "passed",
+        "selfQaSummary": "Completed with 8 pages crawled, high evidence confidence, Cleaning demand satisfaction, 177 records evaluated, 48 monthly-count records, and 5 monthly-search opportunities."
+      }
+    }
   },
-  "outcome": "passed_local_validation",
+  "outcome": "deployed_and_verified",
   "failureReasons": {
     "critical": [],
     "high": []
   },
-  "readiness": "ready_for_staging_deployment_when_branch_policy_and_release_gate_are_followed",
+  "readiness": "deployed_and_verified",
   "knownRisks": [
-    "The assessment app still consumes demand data by copied release artifact; automated upstream sync remains deferred.",
-    "Production and staging will not include this change until it is committed, pushed to the correct branch, and deployed through the release gate."
+    "The assessment app still consumes demand data by copied release artifact; automated upstream sync remains deferred."
   ]
 }

@@ -32,12 +32,12 @@
   "nextReportDistributionRequirement": "Phase 2 one-page teaser PDF must state it is not the final report and direct readers to contact@northvalleyintel.com for the complete report and fixing strategy.",
   "latestLocalScan": "medinaclean-com-1781067349467",
   "latestLocalScanResult": "completed with 11 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, demand report section rendered with found evidence, missing signals, and pages checked",
-  "latestStagingScan": "houseofmodernrealty-com-1781871484548",
-  "latestStagingScanResult": "completed with 8 pages crawled, high evidence confidence, Real Estate demand satisfaction assessed, 290 demand records evaluated, and 147 monthly-count records available",
-  "latestProductionScan": "houseofmodernrealty-com-1781871905812",
-  "latestProductionScanResult": "completed with 8 pages crawled, high evidence confidence, Real Estate demand satisfaction assessed, 290 demand records evaluated, and 147 monthly-count records available",
-  "latestStagingDeployVersion": "c25c4775-3b6f-4de6-a243-61a21a7ae85a",
-  "latestProductionDeployVersion": "2758758c-5460-4a06-8c37-981f48a922c9",
+  "latestStagingScan": "medinaclean-com-1782107097170",
+  "latestStagingScanResult": "completed with 8 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, 177 demand records evaluated, and 48 monthly-count records available",
+  "latestProductionScan": "medinaclean-com-1782107350417",
+  "latestProductionScanResult": "completed with 8 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, 177 demand records evaluated, and 48 monthly-count records available",
+  "latestStagingDeployVersion": "a4ae3a52-a573-4277-a52a-539917944682",
+  "latestProductionDeployVersion": "0a5a68ee-a6d6-4ac9-80ab-eaf333b85ed0",
   "twoPassVerification": "passed for demand satisfaction integration: Generation 38 + Generation 39; Generation 40 deployed and live self-QA passed",
   "latestDemandSync": {
     "generation": 45,
@@ -92,6 +92,21 @@
       "cloudflareBuild": "passed with documented warnings",
       "builtPackageSmoke": "Cleaning assessed with 177 records and 48 monthly-count records; Restoration & Remediation assessed with 238 records and 9 monthly-count records"
     },
-    "deployment": "not_deployed_yet"
+    "deployment": {
+      "staging": {
+        "branch": "staging",
+        "commit": "08f20be",
+        "version": "a4ae3a52-a573-4277-a52a-539917944682",
+        "selfQaScan": "medinaclean-com-1782107097170",
+        "result": "passed"
+      },
+      "production": {
+        "branch": "main",
+        "commit": "a519075",
+        "version": "0a5a68ee-a6d6-4ac9-80ab-eaf333b85ed0",
+        "selfQaScan": "medinaclean-com-1782107350417",
+        "result": "passed"
+      }
+    }
   }
 }

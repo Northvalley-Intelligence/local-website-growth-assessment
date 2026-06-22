@@ -21,20 +21,20 @@
     "OpenNext generated bundle warning about ../../tsconfig.base.json."
   ],
   "latestRelease": {
-    "date": "2026-06-19",
-    "commit": "a05bc24",
+    "date": "2026-06-22",
+    "commit": "a519075",
     "staging": {
       "branch": "staging",
-      "commit": "aa1521d",
-      "version": "c25c4775-3b6f-4de6-a243-61a21a7ae85a",
-      "selfQaScan": "houseofmodernrealty-com-1781871484548",
+      "commit": "08f20be",
+      "version": "a4ae3a52-a573-4277-a52a-539917944682",
+      "selfQaScan": "medinaclean-com-1782107097170",
       "result": "passed"
     },
     "production": {
       "branch": "main",
-      "commit": "a05bc24",
-      "version": "2758758c-5460-4a06-8c37-981f48a922c9",
-      "selfQaScan": "houseofmodernrealty-com-1781871905812",
+      "commit": "a519075",
+      "version": "0a5a68ee-a6d6-4ac9-80ab-eaf333b85ed0",
+      "selfQaScan": "medinaclean-com-1782107350417",
       "result": "passed"
     }
   }
