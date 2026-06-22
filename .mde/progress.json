@@ -19,7 +19,7 @@
   "recommendation": "founder_review",
   "currentGeneration": 46,
   "phaseReadiness": "ready_for_founder_testing",
-  "latestProductionIssue": "No unresolved Critical or High issue after demand satisfaction deployment self-QA.",
+  "latestProductionIssue": "No unresolved Critical or High issue after Generation 46 AI Solutions demand sync deployment self-QA.",
   "latestLocalValidation": {
     "format": "passed",
     "lint": "passed",
@@ -32,12 +32,12 @@
   "nextReportDistributionRequirement": "Phase 2 one-page teaser PDF must state it is not the final report and direct readers to contact@northvalleyintel.com for the complete report and fixing strategy.",
   "latestLocalScan": "medinaclean-com-1781067349467",
   "latestLocalScanResult": "completed with 11 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, demand report section rendered with found evidence, missing signals, and pages checked",
-  "latestStagingScan": "medinaclean-com-1782107097170",
-  "latestStagingScanResult": "completed with 8 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, 177 demand records evaluated, and 48 monthly-count records available",
-  "latestProductionScan": "medinaclean-com-1782107350417",
-  "latestProductionScanResult": "completed with 8 pages crawled, high evidence confidence, Cleaning demand satisfaction assessed, 177 demand records evaluated, and 48 monthly-count records available",
-  "latestStagingDeployVersion": "a4ae3a52-a573-4277-a52a-539917944682",
-  "latestProductionDeployVersion": "0a5a68ee-a6d6-4ac9-80ab-eaf333b85ed0",
+  "latestStagingScan": "www-leewayhertz-com-1782138250754",
+  "latestStagingScanResult": "completed with 7 pages crawled, high evidence confidence, AI Solutions demand satisfaction assessed, 269 demand records evaluated, and 22 monthly-count records available",
+  "latestProductionScan": "www-leewayhertz-com-1782138597208",
+  "latestProductionScanResult": "completed with 7 pages crawled, high evidence confidence, AI Solutions demand satisfaction assessed, 269 demand records evaluated, and 22 monthly-count records available",
+  "latestStagingDeployVersion": "2f17f55a-b60a-4a6c-b8b1-0b977187d09c",
+  "latestProductionDeployVersion": "2e98c262-568d-4879-97b1-60f6389f4fcb",
   "twoPassVerification": "passed for demand satisfaction integration: Generation 38 + Generation 39; Generation 40 deployed and live self-QA passed",
   "latestDemandSync": {
     "generation": 46,
@@ -99,10 +99,20 @@
     },
     "deployment": {
       "staging": {
-        "result": "pending"
+        "branch": "staging",
+        "commit": "dddf8bb",
+        "version": "2f17f55a-b60a-4a6c-b8b1-0b977187d09c",
+        "selfQaScan": "www-leewayhertz-com-1782138250754",
+        "result": "passed",
+        "selfQaSummary": "Completed with 7 pages crawled, high evidence confidence, AI Solutions demand satisfaction, 269 records evaluated, 22 monthly-count records, score 33/100, and 2 monthly-search opportunities. Rendered report HTML included Customer Demand Fit, AI Solutions, Estimated monthly searches, and Pages checked."
       },
       "production": {
-        "result": "pending"
+        "branch": "main",
+        "commit": "11e5d34",
+        "version": "2e98c262-568d-4879-97b1-60f6389f4fcb",
+        "selfQaScan": "www-leewayhertz-com-1782138597208",
+        "result": "passed",
+        "selfQaSummary": "Completed with 7 pages crawled, high evidence confidence, AI Solutions demand satisfaction, 269 records evaluated, 22 monthly-count records, score 33/100, and 2 monthly-search opportunities. Rendered report HTML included Customer Demand Fit, AI Solutions, Estimated monthly searches, and Pages checked."
       }
     }
   }
