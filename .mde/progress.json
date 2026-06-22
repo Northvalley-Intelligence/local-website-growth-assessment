@@ -1,12 +1,12 @@
 {
   "phase": "Phase 1",
   "status": "ready_for_founder_testing",
-  "lastGeneration": 45,
+  "lastGeneration": 46,
   "automatedGate": {
     "format": "pass",
     "lint": "pass",
     "typecheck": "pass",
-    "unitTests": "52 passed",
+    "unitTests": "53 passed",
     "integrationTests": "6 passed",
     "build": "pass",
     "cloudflareBuild": "pass_with_documented_warnings"
@@ -17,14 +17,14 @@
     "latestProductionScanResult": "completed with 11 pages, high evidence confidence, PageSpeed failed honestly, Performance unavailable"
   },
   "recommendation": "founder_review",
-  "currentGeneration": 45,
+  "currentGeneration": 46,
   "phaseReadiness": "ready_for_founder_testing",
   "latestProductionIssue": "No unresolved Critical or High issue after demand satisfaction deployment self-QA.",
   "latestLocalValidation": {
     "format": "passed",
     "lint": "passed",
     "typecheck": "passed",
-    "unitTests": "52 passed",
+    "unitTests": "53 passed",
     "integrationTests": "6 passed",
     "build": "passed",
     "cloudflareBuild": "passed with documented warnings"
@@ -40,11 +40,15 @@
   "latestProductionDeployVersion": "0a5a68ee-a6d6-4ac9-80ab-eaf333b85ed0",
   "twoPassVerification": "passed for demand satisfaction integration: Generation 38 + Generation 39; Generation 40 deployed and live self-QA passed",
   "latestDemandSync": {
-    "generation": 45,
+    "generation": 46,
     "source": "/Users/feroshjacob/code/demand-data-generation/data/json/demand-intelligence-v0.1.0.active.json",
-    "activeRecords": 929,
-    "recordsWithMonthlySearches": 271,
+    "activeRecords": 1198,
+    "recordsWithMonthlySearches": 293,
     "sectorCounts": {
+      "ai_solutions": {
+        "records": 269,
+        "monthlySearchRecords": 22
+      },
       "cleaning": {
         "records": 177,
         "monthlySearchRecords": 48
@@ -86,26 +90,19 @@
       "format": "passed",
       "lint": "passed",
       "typecheck": "passed",
+      "unitTests": "53 passed",
       "integrationTests": "6 passed",
       "build": "passed",
-      "unitTests": "52 passed",
       "cloudflareBuild": "passed with documented warnings",
-      "builtPackageSmoke": "Cleaning assessed with 177 records and 48 monthly-count records; Restoration & Remediation assessed with 238 records and 9 monthly-count records"
+      "focusedTests": "packages/shared/src/demand/satisfaction.test.ts passed with 10 tests",
+      "builtPackageSmoke": "AI Solutions assessed with 269 records evaluated, 22 monthly-count records, and max monthly count 8100"
     },
     "deployment": {
       "staging": {
-        "branch": "staging",
-        "commit": "08f20be",
-        "version": "a4ae3a52-a573-4277-a52a-539917944682",
-        "selfQaScan": "medinaclean-com-1782107097170",
-        "result": "passed"
+        "result": "pending"
       },
       "production": {
-        "branch": "main",
-        "commit": "a519075",
-        "version": "0a5a68ee-a6d6-4ac9-80ab-eaf333b85ed0",
-        "selfQaScan": "medinaclean-com-1782107350417",
-        "result": "passed"
+        "result": "pending"
       }
     }
   }

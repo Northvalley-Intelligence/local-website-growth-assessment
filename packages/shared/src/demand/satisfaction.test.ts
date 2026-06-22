@@ -169,6 +169,27 @@ describe("demand satisfaction", () => {
     expect(report.records.some((record) => record.monthlySearches !== null)).toBe(true);
   });
 
+  it("assesses AI solutions demand from the synced demand dataset", () => {
+    const report = assessDemandSatisfaction({
+      websiteEvidence: {
+        pages: [
+          {
+            url: "https://ai.example/",
+            title: "Marietta AI Consulting and Automation Agency",
+            text: "We provide AI consulting, custom AI solutions, AI implementation, AI automation, workflow automation, CRM automation, sales automation, AI chatbot development, customer service automation, AI agents, AI training for business, ChatGPT consulting, estimates, and case studies for local businesses."
+          }
+        ]
+      }
+    });
+
+    expect(report.status).toBe("assessed");
+    expect(report.sector).toBe("ai_solutions");
+    expect(report.sectorLabel).toBe("AI Solutions");
+    expect(report.demandRecordsEvaluated).toBeGreaterThanOrEqual(269);
+    expect(report.score).not.toBeNull();
+    expect(report.records.some((record) => record.monthlySearches !== null)).toBe(true);
+  });
+
   it("carries monthly search counts into demand opportunities when available", () => {
     const report = assessDemandSatisfaction({
       websiteEvidence: {
