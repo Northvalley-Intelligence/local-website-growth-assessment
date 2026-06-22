@@ -265,6 +265,57 @@ const sectorServiceTerms = {
       "insurance support",
       "claim support"
     ]
+  },
+  ai_solutions: {
+    ai_consulting: [
+      "ai consulting",
+      "ai consultant",
+      "ai solutions",
+      "custom ai solutions",
+      "ai implementation",
+      "chatgpt consultant"
+    ],
+    ai_automation: [
+      "ai automation",
+      "ai automation services",
+      "business automation",
+      "automation agency"
+    ],
+    workflow_automation: [
+      "workflow automation",
+      "business process automation",
+      "process automation"
+    ],
+    crm_sales_automation: [
+      "crm automation",
+      "sales automation",
+      "sales process automation"
+    ],
+    chatbots: [
+      "ai chatbot",
+      "chatbot development",
+      "customer service chatbot",
+      "chatbot"
+    ],
+    customer_service_automation: [
+      "customer service automation",
+      "support automation",
+      "customer service chatbot"
+    ],
+    ai_agents: ["ai agent", "ai agents", "ai agent developer", "agentic automation"],
+    ai_training: [
+      "ai training",
+      "ai training for business",
+      "chatgpt training",
+      "staff ai training"
+    ],
+    provider_selection: [
+      "ai consulting company",
+      "ai automation agency",
+      "ai consulting firm",
+      "ai agency"
+    ],
+    cost: ["ai consulting cost", "ai automation cost", "ai implementation cost"]
   }
 } as const;
 
@@ -277,7 +328,8 @@ const sectorLabels: Record<DemandSector, string> = {
   cleaning: "Cleaning",
   welding: "Welding",
   senior_living: "Senior Living",
-  restoration_remediation: "Restoration & Remediation"
+  restoration_remediation: "Restoration & Remediation",
+  ai_solutions: "AI Solutions"
 };
 
 export type DemandCoverage =
@@ -300,6 +352,14 @@ export type DemandRecordInput = {
   location_modifier: string | null;
   monthly_searches?: number | null;
   search_volume_source?: string | null;
+  location_relevance?: string | null;
+  source?: string | null;
+  source_detail?: string | null;
+  confidence?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  keyword_planner?: Record<string, string | number | null> | null;
   active: boolean;
 };
 
