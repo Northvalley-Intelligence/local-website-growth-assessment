@@ -9,9 +9,10 @@
 //   Lane A - national baseline (geo: United States), caveated
 //   Lane B - local demand (geo: Cobb County, GA + Douglas County, GA by default)
 //
-// Google Ads API REST v21 via global fetch. Node built-ins only. No npm deps,
-// no SDK. Secrets are read from an env file (default .env.local in CWD), held
-// in memory only, and NEVER printed.
+// Google Ads API REST via global fetch (default v25, override with
+// GOOGLE_ADS_API_VERSION). Node built-ins only. No npm deps, no SDK. Secrets
+// are read from an env file (default .env.local in CWD), held in memory only,
+// and NEVER printed.
 //
 // Usage:
 //   node scripts/keyword-volumes.mjs --terms <path> --out <path> \
@@ -27,13 +28,18 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-const API_VERSION = "v21";
+// v21 is RETIRED (Google answers 404). v25 is the newest working version;
+// GOOGLE_ADS_API_VERSION (env file or process env) overrides it.
+export const DEFAULT_API_VERSION = "v25";
+const API_VERSION_ENV_KEY = "GOOGLE_ADS_API_VERSION";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-const ADS_BASE = `https://googleads.googleapis.com/${API_VERSION}`;
+const ADS_HOST = "https://googleads.googleapis.com";
 const LANGUAGE_ENGLISH = "languageConstants/1000";
 const KEYWORD_CHUNK_SIZE = 1000;
 const MANAGER_HINT =
   "Set GOOGLE_ADS_CUSTOMER_ID to a client account id under MCC 7599028409 (digits only).";
+
+const OPTIONAL_ENV_KEYS = ["GOOGLE_ADS_CUSTOMER_ID", API_VERSION_ENV_KEY];
 
 const REQUIRED_ENV_KEYS = [
   "GOOGLE_ADS_DEVELOPER_TOKEN",
@@ -50,22 +56,62 @@ const NA = "—"; // em dash - the ONLY placeholder for a null/absent value
 const MINUS = "−"; // true minus sign, per the demand-data.md contract
 const EN_DASH = "–"; // bid range separator
 
-const MONTH_INDEX = {
-  JANUARY: 1,
-  FEBRUARY: 2,
-  MARCH: 3,
-  APRIL: 4,
-  MAY: 5,
-  JUNE: 6,
-  JULY: 7,
-  AUGUST: 8,
-  SEPTEMBER: 9,
-  OCTOBER: 10,
-  NOVEMBER: 11,
-  DECEMBER: 12
-};
+// MonthOfYear enum NAMES, in calendar order (the API speaks these, not numbers).
+const MONTH_NAMES = [
+  "JANUARY",
+  "FEBRUARY",
+  "MARCH",
+  "APRIL",
+  "MAY",
+  "JUNE",
+  "JULY",
+  "AUGUST",
+  "SEPTEMBER",
+  "OCTOBER",
+  "NOVEMBER",
+  "DECEMBER"
+];
+
+const MONTH_INDEX = Object.fromEntries(MONTH_NAMES.map((name, i) => [name, i + 1]));
+
+// Google returns only 12 monthly points by default, so "same month last year"
+// is never in the window and YoY can never be computed. Ask for 24.
+const HISTORICAL_MONTHS = 24;
 
 const COMPETITION_LEVELS = new Set(["LOW", "MEDIUM", "HIGH"]);
+
+// --------------------------------------------------------------------------
+// API version (env-overridable, resolved once per run)
+// --------------------------------------------------------------------------
+
+let apiVersion = DEFAULT_API_VERSION;
+
+/** The API version this run will use. */
+export function getApiVersion() {
+  return apiVersion;
+}
+
+/** Set the API version for this run; blank/absent falls back to the default. */
+export function setApiVersion(value) {
+  apiVersion = String(value ?? "").trim() || DEFAULT_API_VERSION;
+  return apiVersion;
+}
+
+/**
+ * Resolve GOOGLE_ADS_API_VERSION from the parsed env (env file first, then the
+ * process environment), falling back to DEFAULT_API_VERSION.
+ */
+export function resolveApiVersion(envVars = {}, procEnv = process.env) {
+  const fromFile = String((envVars && envVars[API_VERSION_ENV_KEY]) ?? "").trim();
+  if (fromFile) return fromFile;
+  const fromProc = String((procEnv && procEnv[API_VERSION_ENV_KEY]) ?? "").trim();
+  return fromProc || DEFAULT_API_VERSION;
+}
+
+/** Base URL for the Google Ads REST API at the version in use. */
+export function adsBase(version = getApiVersion()) {
+  return `${ADS_HOST}/${version}`;
+}
 
 // --------------------------------------------------------------------------
 // Pure pieces (exported for tests)
@@ -120,6 +166,34 @@ export function pctChange(current, base) {
   const rounded = Math.round((cur / prev - 1) * 100);
   const sign = rounded < 0 ? MINUS : "+";
   return `${sign}${Math.abs(rounded)}%`;
+}
+
+/**
+ * The 24-month window to request from Keyword Planner:
+ * end = the previous CALENDAR month (relative to `today`),
+ * start = 23 months before that, so the window is 24 months inclusive and
+ * every month in it has its counterpart one year earlier (YoY computable).
+ * `month` values are MonthOfYear enum NAMES ("JANUARY" … "DECEMBER").
+ */
+export function yearMonthRangeFor(today = new Date()) {
+  const endAbs = today.getFullYear() * 12 + today.getMonth() - 1; // getMonth() is 0-based
+  return {
+    start: absMonthToYearMonth(endAbs - (HISTORICAL_MONTHS - 1)),
+    end: absMonthToYearMonth(endAbs)
+  };
+}
+
+function absMonthToYearMonth(abs) {
+  return {
+    year: Math.floor(abs / 12),
+    month: MONTH_NAMES[((abs % 12) + 12) % 12]
+  };
+}
+
+/** "2024-SEPTEMBER → 2026-AUGUST" — for the dry-run summary. */
+export function formatYearMonthRange(range) {
+  const cell = (p) => `${p.year}-${p.month}`;
+  return `${cell(range.start)} → ${cell(range.end)}`;
 }
 
 /**
@@ -239,7 +313,14 @@ export function rowFromMetrics(term, metrics) {
  * Render the demand-data.md document.
  * lanes: { national: { geoLabel, rows }, local: { geoLabel, rows } }
  */
-export function renderMarkdown({ title, pulled, national, local }) {
+export function renderMarkdown({
+  title,
+  pulled,
+  national,
+  local,
+  apiVersion: version
+}) {
+  const versionUsed = String(version ?? "").trim() || getApiVersion();
   const header = "| term | avg mo searches | 3-mo | YoY | competition | bid low–high |";
   const sep = "|---|---|---|---|---|---|";
   const table = (rows) =>
@@ -257,7 +338,7 @@ export function renderMarkdown({ title, pulled, national, local }) {
     "",
     table(local.rows),
     "",
-    `Source: Google Ads API ${API_VERSION} generateKeywordHistoricalMetrics · language English · network Google Search · pulled ${pulled}`,
+    `Source: Google Ads API ${versionUsed} generateKeywordHistoricalMetrics · language English · network Google Search · pulled ${pulled}`,
     ""
   ].join("\n");
 }
@@ -369,6 +450,7 @@ const USAGE = [
   "Env keys (from --env, default .env.local in CWD; process env is a fallback):",
   ...REQUIRED_ENV_KEYS.map((k) => `  ${k} (required)`),
   "  GOOGLE_ADS_CUSTOMER_ID (optional; defaults to GOOGLE_ADS_LOGIN_CUSTOMER_ID)",
+  `  ${API_VERSION_ENV_KEY} (optional; defaults to ${DEFAULT_API_VERSION})`,
   ""
 ].join("\n");
 
@@ -430,7 +512,7 @@ function loadEnv(envPath) {
   }
 
   const resolved = {};
-  for (const key of [...REQUIRED_ENV_KEYS, "GOOGLE_ADS_CUSTOMER_ID"]) {
+  for (const key of [...REQUIRED_ENV_KEYS, ...OPTIONAL_ENV_KEYS]) {
     const value = fileVars[key] || process.env[key] || "";
     if (value) resolved[key] = value;
   }
@@ -438,20 +520,33 @@ function loadEnv(envPath) {
   return { resolved, missing, envFileFound };
 }
 
-function buildMetricsBody(keywords, geoResourceNames) {
+export function buildMetricsBody(
+  keywords,
+  geoResourceNames,
+  yearMonthRange = yearMonthRangeFor()
+) {
   return {
     keywords,
     language: LANGUAGE_ENGLISH,
     geoTargetConstants: geoResourceNames,
     keywordPlanNetwork: "GOOGLE_SEARCH",
-    historicalMetricsOptions: { includeAverageCpc: true }
+    historicalMetricsOptions: {
+      includeAverageCpc: true,
+      yearMonthRange
+    }
   };
 }
 
-function printDryRun(opts, terms, envState) {
+function printDryRun(opts, terms, envState, yearMonthRange) {
   const lines = [
     "Dry run — no network calls will be made.",
     "",
+    `API version: ${getApiVersion()} (${API_VERSION_ENV_KEY}${
+      envState.resolved[API_VERSION_ENV_KEY]
+        ? ""
+        : ` unset; default ${DEFAULT_API_VERSION}`
+    })`,
+    `Historical range: ${formatYearMonthRange(yearMonthRange)} (${HISTORICAL_MONTHS} months, so YoY is computable)`,
     `Terms file: ${opts.terms} (${terms.length} terms)`,
     `Env file:   ${opts.env}${envState.envFileFound ? "" : " (not found; process env only)"}`,
     `Env keys present (values NEVER shown): ${REQUIRED_ENV_KEYS.join(", ")}`,
@@ -469,7 +564,7 @@ function printDryRun(opts, terms, envState) {
     lines.push(`${lane.label}`);
     lines.push(`  geo names: ${lane.names.join(" + ")}`);
     lines.push(
-      `  POST ${ADS_BASE}/geoTargetConstants:suggest`,
+      `  POST ${adsBase()}/geoTargetConstants:suggest`,
       `  ${JSON.stringify({
         locale: "en",
         countryCode: "US",
@@ -478,13 +573,15 @@ function printDryRun(opts, terms, envState) {
     );
     const chunks = chunk(terms, KEYWORD_CHUNK_SIZE);
     lines.push(
-      `  POST ${ADS_BASE}/customers/{customerId}:generateKeywordHistoricalMetrics` +
-        `  (${chunks.length} request${chunks.length === 1 ? "" : "s"}, chunk size ${KEYWORD_CHUNK_SIZE})`
+      `  POST ${adsBase()}/customers/{customerId}:generateKeywordHistoricalMetrics` +
+        `  (${chunks.length} request${chunks.length === 1 ? "" : "s"}, chunk size ${KEYWORD_CHUNK_SIZE})`,
+      `  yearMonthRange: ${formatYearMonthRange(yearMonthRange)}`
     );
     chunks.forEach((keywords, i) => {
       const body = buildMetricsBody(
         keywords,
-        lane.names.map((n) => `geoTargetConstants/<resolved: ${n}>`)
+        lane.names.map((n) => `geoTargetConstants/<resolved: ${n}>`),
+        yearMonthRange
       );
       lines.push(`  body[${i + 1}]:`);
       lines.push(
@@ -574,7 +671,7 @@ function adsHeaders(accessToken, env) {
 
 async function resolveGeoTargets(names, accessToken, env) {
   const res = await postJson(
-    `${ADS_BASE}/geoTargetConstants:suggest`,
+    `${adsBase()}/geoTargetConstants:suggest`,
     { locale: "en", countryCode: "US", locationNames: { names } },
     adsHeaders(accessToken, env)
   );
@@ -590,7 +687,7 @@ async function resolveGeoTargets(names, accessToken, env) {
   });
 }
 
-async function fetchLaneMetrics(terms, geoNames, accessToken, env) {
+async function fetchLaneMetrics(terms, geoNames, accessToken, env, yearMonthRange) {
   const customerId = env.GOOGLE_ADS_CUSTOMER_ID || env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
   const constants = await resolveGeoTargets(geoNames, accessToken, env);
   const resourceNames = constants.map((c) => c.resourceName);
@@ -598,8 +695,8 @@ async function fetchLaneMetrics(terms, geoNames, accessToken, env) {
   const results = [];
   for (const keywords of chunk(terms, KEYWORD_CHUNK_SIZE)) {
     const res = await postJson(
-      `${ADS_BASE}/customers/${customerId}:generateKeywordHistoricalMetrics`,
-      buildMetricsBody(keywords, resourceNames),
+      `${adsBase()}/customers/${customerId}:generateKeywordHistoricalMetrics`,
+      buildMetricsBody(keywords, resourceNames, yearMonthRange),
       adsHeaders(accessToken, env)
     );
     if (!res.ok) fail(describeApiError(res.status, res.json, res.text), 2);
@@ -651,6 +748,9 @@ async function main() {
   }
 
   const envState = loadEnv(opts.env);
+  setApiVersion(resolveApiVersion(envState.resolved));
+  const yearMonthRange = yearMonthRangeFor();
+
   if (envState.missing.length > 0) {
     fail(
       [
@@ -663,7 +763,7 @@ async function main() {
   }
 
   if (opts.dryRun) {
-    printDryRun(opts, terms, envState);
+    printDryRun(opts, terms, envState, yearMonthRange);
     process.exit(0);
   }
 
@@ -674,13 +774,15 @@ async function main() {
     terms,
     splitGeoNames(opts.nationalGeo),
     accessToken,
-    env
+    env,
+    yearMonthRange
   );
   const local = await fetchLaneMetrics(
     terms,
     splitGeoNames(opts.localGeo),
     accessToken,
-    env
+    env,
+    yearMonthRange
   );
 
   const pulled = today();
@@ -689,6 +791,7 @@ async function main() {
   const markdown = renderMarkdown({
     title,
     pulled,
+    apiVersion: getApiVersion(),
     national: { geoLabel: national.geoLabel, rows: laneRows(terms, national.results) },
     local: { geoLabel: local.geoLabel, rows: laneRows(terms, local.results) }
   });
@@ -699,7 +802,8 @@ async function main() {
     `${JSON.stringify(
       {
         pulled,
-        apiVersion: API_VERSION,
+        apiVersion: getApiVersion(),
+        yearMonthRange,
         termsFile: opts.terms,
         terms,
         lanes: {

@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_API_VERSION,
+  adsBase,
+  buildMetricsBody,
   describeApiError,
+  formatYearMonthRange,
+  getApiVersion,
   matchResultsToTerms,
   parseArgs,
   parseEnvFile,
@@ -9,8 +14,11 @@ import {
   pctChange,
   pickGeoConstant,
   renderMarkdown,
+  resolveApiVersion,
   rowFromMetrics,
-  titleFromTermsPath
+  setApiVersion,
+  titleFromTermsPath,
+  yearMonthRangeFor
 } from "../scripts/keyword-volumes.mjs";
 
 const NA = "—";
@@ -183,6 +191,155 @@ describe("rowFromMetrics", () => {
       NA
     ]);
   });
+
+  // The H03 defect: with the 24-month window Google now returns, the latest
+  // month's counterpart one year earlier is IN the window, so YoY computes.
+  it("computes YoY from a 24-month window (2024-09 … 2026-08)", () => {
+    const values = Array.from({ length: 24 }, (_, i) => (i === 23 ? 1000 : 800));
+    const row = rowFromMetrics("pest control", {
+      avgMonthlySearches: 820,
+      competition: "HIGH",
+      monthlySearchVolumes: monthlyVolumes(values, 2024, 9)
+    });
+    expect(row[3]).toBe("+25%"); // 2026-08 1000 vs 2025-08 800
+    expect(row[2]).toBe("+8%"); // mean(800,800,1000)/mean(800,800,800) - 1
+  });
+
+  it("renders YoY as an em dash when only 12 months came back (the pre-H03 default)", () => {
+    const values = Array.from({ length: 12 }, (_, i) => (i === 11 ? 1000 : 800));
+    const row = rowFromMetrics("pest control", {
+      avgMonthlySearches: 820,
+      competition: "HIGH",
+      monthlySearchVolumes: monthlyVolumes(values, 2025, 9)
+    });
+    expect(row[3]).toBe(NA); // 2025-08 is not in a 2025-09 … 2026-08 window
+    expect(row[2]).toBe("+8%"); // 3-mo is unaffected
+  });
+});
+
+describe("yearMonthRangeFor", () => {
+  it("ends on the previous calendar month and starts 23 months before it", () => {
+    // 2026-09-07 -> end 2026-AUGUST, start 2024-SEPTEMBER (24 months inclusive)
+    expect(yearMonthRangeFor(new Date(2026, 8, 7))).toEqual({
+      start: { year: 2024, month: "SEPTEMBER" },
+      end: { year: 2026, month: "AUGUST" }
+    });
+  });
+
+  it("rolls back over January correctly", () => {
+    // 2026-01-15 -> end 2025-DECEMBER, start 2024-JANUARY
+    expect(yearMonthRangeFor(new Date(2026, 0, 15))).toEqual({
+      start: { year: 2024, month: "JANUARY" },
+      end: { year: 2025, month: "DECEMBER" }
+    });
+  });
+
+  it("handles February (end January, start two Februaries back)", () => {
+    expect(yearMonthRangeFor(new Date(2026, 1, 1))).toEqual({
+      start: { year: 2024, month: "FEBRUARY" },
+      end: { year: 2026, month: "JANUARY" }
+    });
+  });
+
+  it("always spans exactly 24 months inclusive", () => {
+    const months = [
+      "JANUARY",
+      "FEBRUARY",
+      "MARCH",
+      "APRIL",
+      "MAY",
+      "JUNE",
+      "JULY",
+      "AUGUST",
+      "SEPTEMBER",
+      "OCTOBER",
+      "NOVEMBER",
+      "DECEMBER"
+    ];
+    for (let m = 0; m < 12; m += 1) {
+      const { start, end } = yearMonthRangeFor(new Date(2026, m, 10));
+      const span =
+        end.year * 12 +
+        months.indexOf(end.month) -
+        (start.year * 12 + months.indexOf(start.month)) +
+        1;
+      expect(span).toBe(24);
+    }
+  });
+});
+
+describe("formatYearMonthRange", () => {
+  it("renders the range for the dry-run summary", () => {
+    expect(formatYearMonthRange(yearMonthRangeFor(new Date(2026, 8, 7)))).toBe(
+      "2024-SEPTEMBER → 2026-AUGUST"
+    );
+  });
+});
+
+describe("API version", () => {
+  afterEach(() => {
+    setApiVersion(DEFAULT_API_VERSION);
+  });
+
+  it("defaults to v25 (v21 is retired and answers 404)", () => {
+    expect(DEFAULT_API_VERSION).toBe("v25");
+    expect(getApiVersion()).toBe("v25");
+    expect(adsBase()).toBe("https://googleads.googleapis.com/v25");
+  });
+
+  it("resolves the default when nothing sets GOOGLE_ADS_API_VERSION", () => {
+    expect(resolveApiVersion({}, {})).toBe("v25");
+    expect(resolveApiVersion({ GOOGLE_ADS_API_VERSION: "  " }, {})).toBe("v25");
+  });
+
+  it("takes the override from an env file, through the same parser as the keys", () => {
+    const parsed = parseEnvFile('GOOGLE_ADS_API_VERSION="v24"');
+    expect(resolveApiVersion(parsed, {})).toBe("v24");
+  });
+
+  it("falls back to the process environment, with the env file winning", () => {
+    expect(resolveApiVersion({}, { GOOGLE_ADS_API_VERSION: "v23" })).toBe("v23");
+    expect(
+      resolveApiVersion(
+        { GOOGLE_ADS_API_VERSION: "v24" },
+        { GOOGLE_ADS_API_VERSION: "v23" }
+      )
+    ).toBe("v24");
+  });
+
+  it("applies the override to the endpoint base URL", () => {
+    setApiVersion("v22");
+    expect(getApiVersion()).toBe("v22");
+    expect(adsBase()).toBe("https://googleads.googleapis.com/v22");
+    expect(adsBase("v25")).toBe("https://googleads.googleapis.com/v25");
+  });
+
+  it("treats a blank override as unset", () => {
+    setApiVersion("");
+    expect(getApiVersion()).toBe("v25");
+  });
+});
+
+describe("buildMetricsBody", () => {
+  it("requests 24 months via historicalMetricsOptions.yearMonthRange", () => {
+    const range = yearMonthRangeFor(new Date(2026, 8, 7));
+    const body = buildMetricsBody(["pest control"], ["geoTargetConstants/2840"], range);
+    expect(body.historicalMetricsOptions).toEqual({
+      includeAverageCpc: true,
+      yearMonthRange: {
+        start: { year: 2024, month: "SEPTEMBER" },
+        end: { year: 2026, month: "AUGUST" }
+      }
+    });
+  });
+
+  it("keeps the rest of the request contract intact", () => {
+    const body = buildMetricsBody(["a", "b"], ["geoTargetConstants/1014895"]);
+    expect(body.keywords).toEqual(["a", "b"]);
+    expect(body.language).toBe("languageConstants/1000");
+    expect(body.geoTargetConstants).toEqual(["geoTargetConstants/1014895"]);
+    expect(body.keywordPlanNetwork).toBe("GOOGLE_SEARCH");
+  });
 });
 
 describe("matchResultsToTerms", () => {
@@ -254,7 +411,7 @@ describe("renderMarkdown", () => {
         "|---|---|---|---|---|---|",
         `| pest control | 2,400 | ${NA} | ${NA} | HIGH | $8.10–$30.00 |`,
         "",
-        "Source: Google Ads API v21 generateKeywordHistoricalMetrics · language English · network Google Search · pulled 2026-09-07",
+        "Source: Google Ads API v25 generateKeywordHistoricalMetrics · language English · network Google Search · pulled 2026-09-07",
         ""
       ].join("\n")
     );
@@ -268,6 +425,17 @@ describe("renderMarkdown", () => {
       local: { geoLabel: "Cobb County, GA", rows: [] }
     });
     expect(md.match(/Caveat:/g)).toHaveLength(1);
+  });
+
+  it("prints the API version actually used in the Source line", () => {
+    const md = renderMarkdown({
+      title: "x",
+      pulled: "2026-01-01",
+      apiVersion: "v24",
+      national: { geoLabel: "United States", rows: [] },
+      local: { geoLabel: "Cobb County, GA", rows: [] }
+    });
+    expect(md).toContain("Source: Google Ads API v24 generateKeywordHistoricalMetrics");
   });
 });
 
