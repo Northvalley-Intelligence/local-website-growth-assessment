@@ -5,3 +5,7 @@ node_modules
 dist
 coverage
 *.tsbuildinfo
+
+# Vendored as-reviewed (do not reformat): OAuth helper kept byte-identical to
+# the copy on the board at streams/keyword-planner-api-automation/attachments/.
+scripts/get-google-ads-refresh-token.mjs

@@ -16,6 +16,18 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // Repo-root Node CLIs (scripts/) and their unit tests run on Node, not in
+    // a browser/Next runtime, so declare the Node globals they legitimately use.
+    files: ["scripts/**/*.mjs", "tests/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        Buffer: "readonly",
+        console: "readonly",
+        process: "readonly"
+      }
+    }
+  },
+  {
     files: ["apps/web/**/*.{ts,tsx}"],
     settings: {
       next: {
