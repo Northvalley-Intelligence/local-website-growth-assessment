@@ -23,6 +23,8 @@ export default defineConfig({
       "**/dist/**"
     ],
     globals: false,
-    include: ["packages/**/*.test.ts", "apps/**/*.test.ts"]
+    // tests/*.test.mjs = unit tests for the repo-root scripts/ Node CLIs.
+    // (tests/integration/** stays in vitest.integration.config.ts.)
+    include: ["packages/**/*.test.ts", "apps/**/*.test.ts", "tests/*.test.mjs"]
   }
 });
