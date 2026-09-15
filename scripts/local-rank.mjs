@@ -12,6 +12,16 @@
 //     point - that order IS the local ranking. No scraping of Google Maps
 //     or Search (ToS).
 //
+// When a term's top 20 does not contain the business, ONE extra Text Search
+// (textQuery: "<name> <place>") looks up the business's OWN Google profile
+// directly, so an unranked business that nonetheless has a verified profile
+// is never told to "claim/verify" a profile it already has. Each term's JSON
+// carries `ownProfile` (null when no own profile was found or none looked
+// up because the business already ranked): { found, name, rating,
+// reviewCount, photoCount, primaryCategory, hoursListed, website, placeId }.
+// When found, the recommendations become concrete gaps vs the top 3 instead
+// of a claim/verify instruction.
+//
 // Node built-ins only. No npm deps. Secrets are read from an env file
 // (default .env.local in CWD), held in memory only, and NEVER printed or
 // logged - not even in --dry-run output or error messages.
@@ -37,6 +47,7 @@ const PLACES_HOST = "https://places.googleapis.com/v1";
 const DEFAULT_RADIUS_KM = 15;
 const DEFAULT_TOP = 3;
 const SEARCH_PAGE_SIZE = 20;
+const OWN_PROFILE_PAGE_SIZE = 5;
 
 const REQUIRED_ENV_KEYS = ["GOOGLE_MAPS_API_KEY"];
 
@@ -243,6 +254,75 @@ export function matchBusiness(results, domain, name) {
 }
 
 /**
+ * Case/punctuation-insensitive name normalization for the own-profile match
+ * only (matchBusiness's exact-name fallback for the top-20 table is left
+ * untouched - this is a separate, looser comparison for the dedicated
+ * own-profile lookup).
+ */
+export function normalizeNameForMatch(name) {
+  return String(name ?? "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Find the business's own profile among a dedicated "<name> <place>" Text
+ * Search's results: websiteUri host equals --domain (www-insensitive) first,
+ * else displayName equals --name/--domain-label, case/punctuation-insensitive.
+ * Returns the index within `results`, or null when neither matches - never a
+ * guessed match.
+ */
+export function matchOwnProfile(results, domain, name) {
+  const list = results ?? [];
+  const wantDomain = domain ? normalizeDomain(domain) : null;
+  if (wantDomain) {
+    for (let i = 0; i < list.length; i += 1) {
+      const host = hostFromUrl(list[i] && list[i].websiteUri);
+      if (host && host === wantDomain) return i;
+    }
+  }
+  const wantName = name ? normalizeNameForMatch(name) : null;
+  if (wantName) {
+    for (let i = 0; i < list.length; i += 1) {
+      const dn = displayNameOf(list[i]);
+      if (dn && normalizeNameForMatch(dn) === wantName) return i;
+    }
+  }
+  return null;
+}
+
+/**
+ * "<domain>" -> a human label for the own-profile search query, used only
+ * when --name is absent: the registrable label (second-level domain),
+ * title-cased. E.g. "northvalleyintel.com" -> "Northvalleyintel".
+ */
+export function domainLabel(domain) {
+  const host = normalizeDomain(domain);
+  const label = host.split(".")[0] || host;
+  return label
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+/** The business name to use for the own-profile search query: --name, else the domain's registrable label. */
+export function resolveBusinessName(name, domain) {
+  const trimmed = name ? String(name).trim() : "";
+  return trimmed || domainLabel(domain);
+}
+
+/** The Places API searchText request body for the dedicated own-profile lookup. */
+export function ownProfileSearchBody(name, place) {
+  return {
+    textQuery: `${name} ${place}`,
+    pageSize: OWN_PROFILE_PAGE_SIZE
+  };
+}
+
+/**
  * Pull the raw, typed fields this script reasons about out of one Places API
  * result. Every field is null when the API omitted it - nothing is ever
  * fabricated. `photoCapped` marks a photos array at the API's 10-item cap.
@@ -267,6 +347,43 @@ export function extractPlaceData(place) {
     websiteUri: place.websiteUri ?? null,
     placeId: place.id ?? null
   };
+}
+
+/**
+ * The `ownProfile` JSON record for one Places API result matched as the
+ * business's own profile - null when there is no match (never fabricated).
+ */
+export function extractOwnProfile(place) {
+  if (!place) return null;
+  const data = extractPlaceData(place);
+  return {
+    found: true,
+    name: data.name,
+    rating: data.rating,
+    reviewCount: data.reviewCount,
+    photoCount: data.photoCount,
+    primaryCategory: data.primaryCategory,
+    hoursListed: data.hasHours,
+    website: data.websiteUri,
+    placeId: data.placeId
+  };
+}
+
+/**
+ * The recommendations' first line when the business's own profile was found
+ * but does not rank for this term - concrete numbers only, em dash for any
+ * field the profile lacks.
+ */
+export function ownProfileFirstLine({ ownProfile, term, place }) {
+  const rating = ownProfile.rating === null ? NA : ownProfile.rating.toFixed(1);
+  const reviews =
+    ownProfile.reviewCount === null ? NA : ownProfile.reviewCount.toLocaleString("en-US");
+  const photos = ownProfile.photoCount === null ? NA : String(ownProfile.photoCount);
+  const category = ownProfile.primaryCategory ?? NA;
+  return (
+    `Your profile exists (rating ${rating}, ${reviews} reviews, ${photos} photos, ` +
+    `category ${category}) but does not rank for "${term}" from ${place}.`
+  );
 }
 
 /** Does this result need a Details call - i.e. is any tracked field simply absent from the object? */
@@ -304,23 +421,12 @@ export function formatRow(rankLabel, data) {
 }
 
 /**
- * Recommendations comparing the business's extracted data against the top-N
+ * Recommendations comparing a business's extracted data against the top-N
  * businesses' extracted data. Each rule fires ONLY when its evidence says so;
- * numbers in the sentence come from the actual data, never invented.
+ * numbers in the sentence come from the actual data, never invented. Shared
+ * by the in-top-20 case and the not-in-top-20-but-own-profile-found case.
  */
-export function buildRecommendations({
-  business,
-  businessRankLabel,
-  top3,
-  term,
-  place
-}) {
-  if (businessRankLabel === NOT_IN_TOP_20 || !business) {
-    return [
-      `No listing found for "${term}" from ${place} — claim/verify a Google Business Profile.`
-    ];
-  }
-
+export function buildGapRecommendations({ business, top3 }) {
   const recs = [];
   const others = top3 ?? [];
 
@@ -375,6 +481,44 @@ export function buildRecommendations({
   return recs;
 }
 
+/**
+ * Recommendations for one term: gaps vs the top 3 when the business ranks
+ * (or its own profile was found even though it does not rank - honest gaps,
+ * never a fabricated "claim/verify" when a profile already exists); the
+ * claim/verify line only when there is truly no profile.
+ */
+export function buildRecommendations({
+  business,
+  businessRankLabel,
+  top3,
+  term,
+  place,
+  ownProfile
+}) {
+  if (businessRankLabel === NOT_IN_TOP_20 || !business) {
+    if (ownProfile && ownProfile.found) {
+      const adapted = {
+        rating: ownProfile.rating,
+        reviewCount: ownProfile.reviewCount,
+        photoCount: ownProfile.photoCount,
+        photoCapped: ownProfile.photoCount === 10,
+        primaryCategory: ownProfile.primaryCategory,
+        hasHours: Boolean(ownProfile.hoursListed),
+        hasWebsite: Boolean(ownProfile.website)
+      };
+      return [
+        ownProfileFirstLine({ ownProfile, term, place }),
+        ...buildGapRecommendations({ business: adapted, top3 })
+      ];
+    }
+    return [
+      `No listing found for "${term}" from ${place} — claim/verify a Google Business Profile.`
+    ];
+  }
+
+  return buildGapRecommendations({ business, top3 });
+}
+
 /** One term's table + recommendations section (no trailing guidance block - renderMarkdown appends that once). */
 export function renderTermSection({ term, place, rows, recommendations }) {
   const tableRows = rows.map((r) => {
@@ -404,7 +548,7 @@ export function renderMarkdown({ sections }) {
  * Assemble one term's rows + recommendations from a searchText-shaped
  * `results` array (Google's own relevance order = the local ranking).
  */
-export function buildTermOutput({ term, place, results, domain, name, top }) {
+export function buildTermOutput({ term, place, results, domain, name, top, ownProfile }) {
   const list = results ?? [];
   const idx = matchBusiness(list, domain, name);
   const rankLabel = idx === null ? NOT_IN_TOP_20 : String(idx + 1);
@@ -425,7 +569,8 @@ export function buildTermOutput({ term, place, results, domain, name, top }) {
     businessRankLabel: rankLabel,
     top3: topData,
     term,
-    place
+    place,
+    ownProfile
   });
 
   return {
@@ -573,6 +718,12 @@ function printDryRun(opts, terms, envState) {
     "",
     `3) Place Details (GET ${PLACES_HOST}/places/{id}, field mask: ${DETAILS_FIELD_MASK}) -` +
       ` issued only for a top-${opts.top}/business result missing a tracked field from the search response.`,
+    "",
+    "4) ONE extra own-profile lookup per term whose top 20 does NOT contain the business" +
+      " (never when it already ranks):",
+    `   POST ${PLACES_HOST}/places:searchText`,
+    `   headers: X-Goog-Api-Key: <REDACTED>, X-Goog-FieldMask: ${SEARCH_FIELD_MASK}`,
+    `   body: ${JSON.stringify(ownProfileSearchBody(resolveBusinessName(opts.name, opts.domain), opts.place))}`,
     ""
   );
   process.stdout.write(lines.join("\n"));
@@ -646,6 +797,32 @@ async function completeResult(place, apiKey) {
   return { ...details, ...place };
 }
 
+async function searchOwnProfileText(name, place, apiKey) {
+  const res = await postJson(`${PLACES_HOST}/places:searchText`, ownProfileSearchBody(name, place), {
+    "X-Goog-Api-Key": apiKey,
+    "X-Goog-FieldMask": SEARCH_FIELD_MASK
+  });
+  if (!res.ok) fail(describeApiError(res.status, res.json), 2);
+  return (res.json && res.json.places) || [];
+}
+
+/**
+ * ONE extra Places Text Search to find the business's own profile directly,
+ * used only for a term whose top 20 does not contain the business. Never
+ * fabricates a match: null when the dedicated search finds nothing.
+ */
+async function lookupOwnProfile({ domain, name, place, apiKey }) {
+  const resolvedName = resolveBusinessName(name, domain);
+  process.stdout.write(
+    `Own-profile lookup: "${resolvedName}" is not in the top 20 - running one extra Places search for its own profile.\n`
+  );
+  const rawResults = await searchOwnProfileText(resolvedName, place, apiKey);
+  const idx = matchOwnProfile(rawResults, domain, name || resolvedName);
+  if (idx === null) return null;
+  const complete = await completeResult(rawResults[idx], apiKey);
+  return extractOwnProfile(complete);
+}
+
 // --------------------------------------------------------------------------
 // main
 // --------------------------------------------------------------------------
@@ -706,16 +883,23 @@ async function main() {
       rawResults.map((r, i) => (completeIndexes.has(i) ? completeResult(r, apiKey) : r))
     );
 
+    // One extra API call per unranked term only - never when the business already ranks.
+    const ownProfile =
+      idx === null
+        ? await lookupOwnProfile({ domain: opts.domain, name: opts.name, place: opts.place, apiKey })
+        : null;
+
     const { section, recommendations } = buildTermOutput({
       term,
       place: opts.place,
       results,
       domain: opts.domain,
       name: opts.name,
-      top: opts.top
+      top: opts.top,
+      ownProfile
     });
     sections.push(section);
-    jsonTerms.push({ term, results, recommendations });
+    jsonTerms.push({ term, results, recommendations, ownProfile });
   }
 
   const markdown = renderMarkdown({ sections });

@@ -150,6 +150,17 @@ Run the Cloudflare/OpenNext build:
 npm run cf:build
 ```
 
+## Scripts
+
+Standalone Node scripts in `scripts/` (built-ins only, run with `node scripts/<name>.mjs`;
+secrets always come from `--env <path>`, default `.env.local`, never printed):
+
+| Script | Purpose |
+| --- | --- |
+| `local-rank.mjs` | Where a business sits in Google's local listing for its own search terms (Places API (New) Text Search + Geocoding), a top-3 comparison, and evidence-bearing recommendations for the complimentary report. When a term's top 20 does not contain the business, it runs one extra Text Search to find the business's own Google profile directly, so an unranked business with a verified profile gets honest gaps vs the top 3 instead of a "claim/verify a profile" line it doesn't need. |
+| `keyword-volumes.mjs` | Google Ads Keyword Planner search volumes for the demand section. |
+| `get-google-ads-refresh-token.mjs` | One-time OAuth refresh token helper for the Google Ads API. |
+
 ## Environment
 
 Secrets must stay in local environment files or deployment-provider secret
