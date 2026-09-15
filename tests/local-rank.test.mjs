@@ -7,22 +7,30 @@ import {
   NA,
   NOT_IN_TOP_20,
   SEARCH_FIELD_MASK,
+  buildGapRecommendations,
   buildRecommendations,
   buildTermOutput,
   describeApiError,
+  domainLabel,
+  extractOwnProfile,
   extractPlaceData,
   formatRow,
   geocodeAddressParam,
   hostFromUrl,
   kmToMeters,
   matchBusiness,
+  matchOwnProfile,
   needsDetails,
   normalizeDomain,
+  normalizeNameForMatch,
+  ownProfileFirstLine,
+  ownProfileSearchBody,
   parseArgs,
   parseEnvFile,
   parseTermList,
   renderMarkdown,
   renderTermSection,
+  resolveBusinessName,
   searchTextBody
 } from "../scripts/local-rank.mjs";
 
@@ -947,5 +955,218 @@ describe("field masks", () => {
     ]) {
       expect(SEARCH_FIELD_MASK.split(",")).toContain(field);
     }
+  });
+});
+
+describe("normalizeNameForMatch", () => {
+  it("lowercases and collapses punctuation/whitespace", () => {
+    expect(normalizeNameForMatch("Felton & Peel, LLC")).toBe("felton peel llc");
+    expect(normalizeNameForMatch("  Northvalley   Intelligence  ")).toBe(
+      "northvalley intelligence"
+    );
+  });
+
+  it("treats punctuation-only differences as equal", () => {
+    expect(normalizeNameForMatch("Felton & Peel")).toBe(normalizeNameForMatch("Felton, Peel"));
+  });
+});
+
+describe("domainLabel / resolveBusinessName", () => {
+  it("derives a title-cased label from the registrable domain", () => {
+    expect(domainLabel("northvalleyintel.com")).toBe("Northvalleyintel");
+    expect(domainLabel("www.feltonandpeel.com")).toBe("Feltonandpeel");
+  });
+
+  it("resolveBusinessName prefers --name, falling back to the domain label", () => {
+    expect(resolveBusinessName("Northvalley Intelligence", "northvalleyintel.com")).toBe(
+      "Northvalley Intelligence"
+    );
+    expect(resolveBusinessName(null, "northvalleyintel.com")).toBe("Northvalleyintel");
+    expect(resolveBusinessName("  ", "northvalleyintel.com")).toBe("Northvalleyintel");
+  });
+});
+
+describe("ownProfileSearchBody", () => {
+  it("builds a plain textQuery, no locationBias", () => {
+    expect(ownProfileSearchBody("Northvalley Intelligence", "Marietta, GA")).toEqual({
+      textQuery: "Northvalley Intelligence Marietta, GA",
+      pageSize: 5
+    });
+  });
+});
+
+describe("matchOwnProfile (host match, name match, no match)", () => {
+  it("matches by website host, www-insensitive", () => {
+    const results = [
+      makePlace({ name: "Some Other Business", website: "https://other.com" }),
+      makePlace({ name: "Northvalley Intelligence", website: "https://www.northvalleyintel.com" })
+    ];
+    expect(matchOwnProfile(results, "northvalleyintel.com", "Northvalley Intelligence")).toBe(1);
+  });
+
+  it("falls back to exact name, case/punctuation-insensitive, when no host matches", () => {
+    const results = [
+      makePlace({ name: "Northvalley, Intelligence!" }) // no website at all
+    ];
+    expect(matchOwnProfile(results, "northvalleyintel.com", "northvalley intelligence")).toBe(0);
+  });
+
+  it("returns null (never a guessed match) when neither host nor name matches", () => {
+    const results = [makePlace({ name: "Unrelated Co", website: "https://unrelated.com" })];
+    expect(matchOwnProfile(results, "northvalleyintel.com", "Northvalley Intelligence")).toBeNull();
+  });
+});
+
+describe("extractOwnProfile", () => {
+  it("returns null when there is no place (never fabricated)", () => {
+    expect(extractOwnProfile(null)).toBeNull();
+  });
+
+  it("extracts the ownProfile record shape with found: true", () => {
+    const place = makePlace({
+      id: "p1",
+      name: "Northvalley Intelligence",
+      website: "https://northvalleyintel.com",
+      rating: 5.0,
+      reviews: 3,
+      category: "Consultant",
+      hours: true,
+      photos: 2
+    });
+    expect(extractOwnProfile(place)).toEqual({
+      found: true,
+      name: "Northvalley Intelligence",
+      rating: 5.0,
+      reviewCount: 3,
+      photoCount: 2,
+      primaryCategory: "Consultant",
+      hoursListed: true,
+      website: "https://northvalleyintel.com",
+      placeId: "p1"
+    });
+  });
+});
+
+describe("buildGapRecommendations (direct)", () => {
+  it("is the same gap logic buildRecommendations delegates to for a ranked business", () => {
+    const business = extractPlaceData(
+      makePlace({ name: "Biz", rating: 4.9, reviews: 5, category: "Consultant", hours: true, photos: 10 })
+    );
+    const top3 = [
+      extractPlaceData(
+        makePlace({ name: "A", rating: 4.9, reviews: 200, category: "Consultant", hours: true, photos: 10 })
+      )
+    ];
+    expect(buildGapRecommendations({ business, top3 })).toContain(
+      "Get more Google reviews — the top 3 average 200; you have 5."
+    );
+  });
+});
+
+describe("buildGapRecommendations (own-profile gaps builder, with/without own profile)", () => {
+  const term = "software consultant near me";
+  const place = "Marietta, GA";
+  const top3 = [
+    extractPlaceData(
+      makePlace({ name: "A", rating: 4.9, reviews: 200, category: "Consultant", hours: true, photos: 10 })
+    ),
+    extractPlaceData(
+      makePlace({ name: "B", rating: 4.8, reviews: 150, category: "Consultant", hours: true, photos: 10 })
+    ),
+    extractPlaceData(
+      makePlace({ name: "C", rating: 4.7, reviews: 100, category: "Consultant", hours: true, photos: 8 })
+    )
+  ];
+
+  it("with an own profile found: first line + gap recommendations, never claim/verify", () => {
+    const ownProfile = {
+      found: true,
+      name: "Northvalley Intelligence",
+      rating: 4.6,
+      reviewCount: 5,
+      photoCount: 2,
+      primaryCategory: "Software company",
+      hoursListed: false,
+      website: null,
+      placeId: "p1"
+    };
+    const recs = buildRecommendations({
+      business: null,
+      businessRankLabel: NOT_IN_TOP_20,
+      top3,
+      term,
+      place,
+      ownProfile
+    });
+    expect(recs[0]).toBe(
+      'Your profile exists (rating 4.6, 5 reviews, 2 photos, category Software company) but does not rank for "software consultant near me" from Marietta, GA.'
+    );
+    expect(recs).toContain("Get more Google reviews — the top 3 average 150; you have 5.");
+    expect(recs).toContain("Add more pictures — top 3 carry 10; you have 2.");
+    expect(recs).toContain("Set primary category to Consultant (top 3 use it).");
+    expect(recs).toContain("Publish business hours.");
+    expect(recs).toContain("Link the website to the profile.");
+    expect(recs.some((r) => r.includes("claim/verify"))).toBe(false);
+  });
+
+  it("without an own profile (null): the claim/verify line, unchanged from today", () => {
+    const recs = buildRecommendations({
+      business: null,
+      businessRankLabel: NOT_IN_TOP_20,
+      top3,
+      term,
+      place,
+      ownProfile: null
+    });
+    expect(recs).toEqual([
+      `No listing found for "${term}" from ${place} — claim/verify a Google Business Profile.`
+    ]);
+  });
+
+  it("own profile found but every gap already met: only the first line, no fabricated gaps", () => {
+    const ownProfile = {
+      found: true,
+      name: "Northvalley Intelligence",
+      rating: 4.9,
+      reviewCount: 500,
+      photoCount: 10,
+      primaryCategory: "Consultant",
+      hoursListed: true,
+      website: "https://northvalleyintel.com",
+      placeId: "p1"
+    };
+    const recs = buildRecommendations({
+      business: null,
+      businessRankLabel: NOT_IN_TOP_20,
+      top3,
+      term,
+      place,
+      ownProfile
+    });
+    expect(recs).toHaveLength(1);
+    expect(recs[0]).toContain("Your profile exists");
+  });
+});
+
+describe("ownProfileFirstLine", () => {
+  it("renders every field, em dash for anything missing", () => {
+    const line = ownProfileFirstLine({
+      ownProfile: {
+        found: true,
+        name: "Biz",
+        rating: null,
+        reviewCount: null,
+        photoCount: null,
+        primaryCategory: null,
+        hoursListed: false,
+        website: null,
+        placeId: "p1"
+      },
+      term: "ai consultant near me",
+      place: "Marietta, GA"
+    });
+    expect(line).toBe(
+      `Your profile exists (rating ${NA}, ${NA} reviews, ${NA} photos, category ${NA}) but does not rank for "ai consultant near me" from Marietta, GA.`
+    );
   });
 });
