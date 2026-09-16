@@ -12,8 +12,11 @@
 //     point - that order IS the local ranking. No scraping of Google Maps
 //     or Search (ToS).
 //
-// When a term's top 20 does not contain the business, ONE extra Text Search
-// (textQuery: "<name> <place>") looks up the business's OWN Google profile
+// Results are paginated via nextPageToken up to 3 pages of 20 (60 total,
+// Google's own cap) - or fewer pages when --depth 20/40 asks for less.
+//
+// When a term's searched depth does not contain the business, ONE extra Text
+// Search (textQuery: "<name> <place>") looks up the business's OWN Google profile
 // directly, so an unranked business that nonetheless has a verified profile
 // is never told to "claim/verify" a profile it already has. Each term's JSON
 // carries `ownProfile` (null when no own profile was found or none looked
@@ -30,7 +33,7 @@
 //   node scripts/local-rank.mjs --domain <domain> --terms "<term>;<term>" \
 //     --place "<City, GA | zip>" --out <path.md> \
 //     [--json <path>] [--env <path>] [--name <business name>] \
-//     [--radius-km 15] [--top 3] [--dry-run]
+//     [--radius-km 15] [--top 3] [--depth 60] [--dry-run]
 //
 // Exit codes: 0 ok · 1 bad input / missing env · 2 Google API failure.
 // ---------------------------------------------------------------------------
@@ -40,13 +43,17 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 export const NA = "—"; // em dash - the ONLY placeholder for a null/absent value
-export const NOT_IN_TOP_20 = "not in top 20";
+export const NOT_IN_TOP_60 = "not in top 60";
 
 const GEOCODE_HOST = "https://maps.googleapis.com/maps/api/geocode/json";
 const PLACES_HOST = "https://places.googleapis.com/v1";
 const DEFAULT_RADIUS_KM = 15;
 const DEFAULT_TOP = 3;
 const SEARCH_PAGE_SIZE = 20;
+const DEFAULT_DEPTH = 60;
+const VALID_DEPTHS = new Set([20, 40, 60]);
+const MAX_PAGES = 3;
+const PAGE_TOKEN_DELAY_MS = 2000; // Google's own guidance: a nextPageToken needs a short delay before it's valid.
 const OWN_PROFILE_PAGE_SIZE = 5;
 
 const REQUIRED_ENV_KEYS = ["GOOGLE_MAPS_API_KEY"];
@@ -200,6 +207,52 @@ export function searchTextBody(term, center, radiusKm) {
     pageSize: SEARCH_PAGE_SIZE,
     rankPreference: "RELEVANCE"
   };
+}
+
+/**
+ * The Places API searchText request body to fetch the NEXT page of a prior
+ * search. Google requires a paging request's other parameters to match the
+ * initial request exactly ("Request parameters for paging requests must
+ * match the initial SearchText request") - so this repeats searchTextBody's
+ * fields and adds pageToken, rather than sending pageToken alone.
+ */
+export function nextPageBody(term, center, radiusKm, pageToken) {
+  return { ...searchTextBody(term, center, radiusKm), pageToken };
+}
+
+/** How many pages of SEARCH_PAGE_SIZE this depth needs, capped at MAX_PAGES (60/20 = 3). */
+export function pagesForDepth(depth) {
+  return Math.min(MAX_PAGES, Math.ceil(depth / SEARCH_PAGE_SIZE));
+}
+
+const defaultSleep = (ms) => new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+
+/**
+ * Merge up to `pagesForDepth(depth)` pages of Places Text Search results into
+ * one list, capped at `depth`. `fetchPage(body)` -> { places, nextPageToken }
+ * is injected so tests can simulate paging without real network calls or
+ * timers; `sleep` is injected the same way. When a page fetched with a
+ * pageToken comes back with no places (the token was not valid yet), retry
+ * that SAME page once after `PAGE_TOKEN_DELAY_MS` - never more than once.
+ */
+export async function fetchSearchPages({ term, center, radiusKm, depth, fetchPage, sleep = defaultSleep }) {
+  const maxPages = pagesForDepth(depth);
+  let allPlaces = [];
+  let pageToken = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const body = pageToken
+      ? nextPageBody(term, center, radiusKm, pageToken)
+      : searchTextBody(term, center, radiusKm);
+    let result = await fetchPage(body);
+    if (pageToken && (!result.places || result.places.length === 0)) {
+      await sleep(PAGE_TOKEN_DELAY_MS);
+      result = await fetchPage(body);
+    }
+    allPlaces = allPlaces.concat(result.places || []);
+    pageToken = result.nextPageToken || null;
+    if (!pageToken || allPlaces.length >= depth) break;
+  }
+  return allPlaces.slice(0, depth);
 }
 
 /** Host of a URL, lowercased and www-insensitive; null when unparseable/absent. */
@@ -481,11 +534,22 @@ export function buildGapRecommendations({ business, top3 }) {
   return recs;
 }
 
+/** The exact-position line when the business WAS found: "Your listing is #N of M results ...". */
+export function foundPositionLine({ rankLabel, searched, term, place }) {
+  return `Your listing is #${rankLabel} of ${searched} results for "${term}" from ${place}.`;
+}
+
+/** The exact-position line when the business was NOT found within the searched depth. */
+export function notFoundPositionLine({ term, place }) {
+  return `Your business does not appear in the top 60 results for "${term}" from ${place}.`;
+}
+
 /**
- * Recommendations for one term: gaps vs the top 3 when the business ranks
- * (or its own profile was found even though it does not rank - honest gaps,
- * never a fabricated "claim/verify" when a profile already exists); the
- * claim/verify line only when there is truly no profile.
+ * Recommendations for one term: an exact-position line first (found or not),
+ * then gaps vs the top 3 when the business ranks (or its own profile was
+ * found even though it does not rank - honest gaps, never a fabricated
+ * "claim/verify" when a profile already exists); the claim/verify line only
+ * when there is truly no profile.
  */
 export function buildRecommendations({
   business,
@@ -493,9 +557,11 @@ export function buildRecommendations({
   top3,
   term,
   place,
-  ownProfile
+  ownProfile,
+  searched
 }) {
-  if (businessRankLabel === NOT_IN_TOP_20 || !business) {
+  if (businessRankLabel === NOT_IN_TOP_60 || !business) {
+    const notFound = notFoundPositionLine({ term, place });
     if (ownProfile && ownProfile.found) {
       const adapted = {
         rating: ownProfile.rating,
@@ -507,16 +573,21 @@ export function buildRecommendations({
         hasWebsite: Boolean(ownProfile.website)
       };
       return [
+        notFound,
         ownProfileFirstLine({ ownProfile, term, place }),
         ...buildGapRecommendations({ business: adapted, top3 })
       ];
     }
     return [
+      notFound,
       `No listing found for "${term}" from ${place} — claim/verify a Google Business Profile.`
     ];
   }
 
-  return buildGapRecommendations({ business, top3 });
+  return [
+    foundPositionLine({ rankLabel: businessRankLabel, searched, term, place }),
+    ...buildGapRecommendations({ business, top3 })
+  ];
 }
 
 /** One term's table + recommendations section (no trailing guidance block - renderMarkdown appends that once). */
@@ -550,8 +621,9 @@ export function renderMarkdown({ sections }) {
  */
 export function buildTermOutput({ term, place, results, domain, name, top, ownProfile }) {
   const list = results ?? [];
+  const searched = list.length;
   const idx = matchBusiness(list, domain, name);
-  const rankLabel = idx === null ? NOT_IN_TOP_20 : String(idx + 1);
+  const rankLabel = idx === null ? NOT_IN_TOP_60 : String(idx + 1);
   const topResults = list.slice(0, top);
   const topData = topResults.map(extractPlaceData);
   const businessData = idx === null ? null : extractPlaceData(list[idx]);
@@ -570,11 +642,14 @@ export function buildTermOutput({ term, place, results, domain, name, top, ownPr
     top3: topData,
     term,
     place,
-    ownProfile
+    ownProfile,
+    searched
   });
 
   return {
+    rank: idx === null ? null : idx + 1,
     rankLabel,
+    searched,
     section: renderTermSection({ term, place, rows, recommendations }),
     recommendations
   };
@@ -600,7 +675,7 @@ const USAGE = [
   '  node scripts/local-rank.mjs --domain <domain> --terms "<term>;<term>" \\',
   '    --place "<City, GA | zip>" --out <path.md> \\',
   "    [--json <path>] [--env <path>] [--name <business name>] \\",
-  "    [--radius-km 15] [--top 3] [--dry-run]",
+  "    [--radius-km 15] [--top 3] [--depth 20|40|60] [--dry-run]",
   "",
   "Env keys (from --env, default .env.local in CWD; process env is a fallback):",
   ...REQUIRED_ENV_KEYS.map((k) => `  ${k} (required)`),
@@ -618,6 +693,7 @@ export function parseArgs(argv) {
     env: ".env.local",
     radiusKm: DEFAULT_RADIUS_KM,
     top: DEFAULT_TOP,
+    depth: DEFAULT_DEPTH,
     dryRun: false
   };
   const flags = {
@@ -629,9 +705,10 @@ export function parseArgs(argv) {
     "--json": "json",
     "--env": "env",
     "--radius-km": "radiusKm",
-    "--top": "top"
+    "--top": "top",
+    "--depth": "depth"
   };
-  const numericFlags = new Set(["--radius-km", "--top"]);
+  const numericFlags = new Set(["--radius-km", "--top", "--depth"]);
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -665,6 +742,9 @@ export function parseArgs(argv) {
     if (!Number.isInteger(opts.top) || opts.top <= 0) {
       throw new Error("--top must be a positive integer");
     }
+    if (!VALID_DEPTHS.has(opts.depth)) {
+      throw new Error("--depth must be one of 20, 40, 60");
+    }
   }
   return opts;
 }
@@ -697,6 +777,7 @@ function printDryRun(opts, terms, envState) {
     `Place:   ${opts.place}`,
     `Radius:  ${opts.radiusKm} km`,
     `Top N:   ${opts.top}`,
+    `Depth:   ${opts.depth} (${pagesForDepth(opts.depth)} page(s) of ${SEARCH_PAGE_SIZE})`,
     `Env file:   ${opts.env}${envState.envFileFound ? "" : " (not found; process env only)"}`,
     `Env keys present (values NEVER shown): ${REQUIRED_ENV_KEYS.join(", ")}`,
     `Output:     ${opts.out}`,
@@ -705,7 +786,9 @@ function printDryRun(opts, terms, envState) {
     "1) Geocode the area centre (key sent as a query param, never printed):",
     `   GET ${GEOCODE_HOST}?address=${encodeURIComponent(geocodeAddressParam(opts.place))}&key=<REDACTED>`,
     "",
-    "2) For each term, Places API Text Search (Google's own relevance order = the local ranking):",
+    `2) For each term, Places API Text Search, up to ${pagesForDepth(opts.depth)} page(s)` +
+      ` via nextPageToken (Google's own relevance order = the local ranking; a 2s delay + one` +
+      " retry if a page token isn't valid yet):",
     `   POST ${PLACES_HOST}/places:searchText`,
     `   headers: X-Goog-Api-Key: <REDACTED>, X-Goog-FieldMask: ${SEARCH_FIELD_MASK}`
   ];
@@ -719,7 +802,7 @@ function printDryRun(opts, terms, envState) {
     `3) Place Details (GET ${PLACES_HOST}/places/{id}, field mask: ${DETAILS_FIELD_MASK}) -` +
       ` issued only for a top-${opts.top}/business result missing a tracked field from the search response.`,
     "",
-    "4) ONE extra own-profile lookup per term whose top 20 does NOT contain the business" +
+    `4) ONE extra own-profile lookup per term whose searched depth (${opts.depth}) does NOT contain the business` +
       " (never when it already ranks):",
     `   POST ${PLACES_HOST}/places:searchText`,
     `   headers: X-Goog-Api-Key: <REDACTED>, X-Goog-FieldMask: ${SEARCH_FIELD_MASK}`,
@@ -768,17 +851,29 @@ async function geocode(place, apiKey) {
   return { latitude: loc.lat, longitude: loc.lng };
 }
 
-async function searchText(term, center, radiusKm, apiKey) {
-  const res = await postJson(
-    `${PLACES_HOST}/places:searchText`,
-    searchTextBody(term, center, radiusKm),
-    {
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": SEARCH_FIELD_MASK
-    }
-  );
+// nextPageToken is a top-level response field (not under `places.`), so the
+// paginated search request needs it added to the field mask; the base
+// SEARCH_FIELD_MASK stays untouched (single-page callers, dry-run printing,
+// and the "search mask == details mask with a places. prefix" invariant).
+const SEARCH_FIELD_MASK_PAGED = `${SEARCH_FIELD_MASK},nextPageToken`;
+
+async function searchTextPage(body, apiKey) {
+  const res = await postJson(`${PLACES_HOST}/places:searchText`, body, {
+    "X-Goog-Api-Key": apiKey,
+    "X-Goog-FieldMask": SEARCH_FIELD_MASK_PAGED
+  });
   if (!res.ok) fail(describeApiError(res.status, res.json), 2);
-  return (res.json && res.json.places) || [];
+  return { places: (res.json && res.json.places) || [], nextPageToken: res.json && res.json.nextPageToken };
+}
+
+async function searchText(term, center, radiusKm, apiKey, depth) {
+  return fetchSearchPages({
+    term,
+    center,
+    radiusKm,
+    depth,
+    fetchPage: (body) => searchTextPage(body, apiKey)
+  });
 }
 
 async function fetchDetails(placeId, apiKey) {
@@ -808,13 +903,13 @@ async function searchOwnProfileText(name, place, apiKey) {
 
 /**
  * ONE extra Places Text Search to find the business's own profile directly,
- * used only for a term whose top 20 does not contain the business. Never
- * fabricates a match: null when the dedicated search finds nothing.
+ * used only for a term whose searched depth does not contain the business.
+ * Never fabricates a match: null when the dedicated search finds nothing.
  */
 async function lookupOwnProfile({ domain, name, place, apiKey }) {
   const resolvedName = resolveBusinessName(name, domain);
   process.stdout.write(
-    `Own-profile lookup: "${resolvedName}" is not in the top 20 - running one extra Places search for its own profile.\n`
+    `Own-profile lookup: "${resolvedName}" was not found - running one extra Places search for its own profile.\n`
   );
   const rawResults = await searchOwnProfileText(resolvedName, place, apiKey);
   const idx = matchOwnProfile(rawResults, domain, name || resolvedName);
@@ -875,7 +970,7 @@ async function main() {
   const sections = [];
   const jsonTerms = [];
   for (const term of terms) {
-    const rawResults = await searchText(term, center, opts.radiusKm, apiKey);
+    const rawResults = await searchText(term, center, opts.radiusKm, apiKey, opts.depth);
     const idx = matchBusiness(rawResults, opts.domain, opts.name);
     const completeIndexes = new Set(rawResults.slice(0, opts.top).map((_, i) => i));
     if (idx !== null) completeIndexes.add(idx);
@@ -889,7 +984,7 @@ async function main() {
         ? await lookupOwnProfile({ domain: opts.domain, name: opts.name, place: opts.place, apiKey })
         : null;
 
-    const { section, recommendations } = buildTermOutput({
+    const { rank, searched, section, recommendations } = buildTermOutput({
       term,
       place: opts.place,
       results,
@@ -899,7 +994,7 @@ async function main() {
       ownProfile
     });
     sections.push(section);
-    jsonTerms.push({ term, results, recommendations, ownProfile });
+    jsonTerms.push({ term, rank, searched, results, recommendations, ownProfile });
   }
 
   const markdown = renderMarkdown({ sections });
@@ -916,6 +1011,7 @@ async function main() {
           center,
           radiusKm: opts.radiusKm,
           top: opts.top,
+          depth: opts.depth,
           terms: jsonTerms
         },
         null,

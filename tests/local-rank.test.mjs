@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   DETAILS_FIELD_MASK,
   GOOGLE_GUIDANCE_BLOCK,
   GOOGLE_GUIDANCE_URL,
   NA,
-  NOT_IN_TOP_20,
+  NOT_IN_TOP_60,
   SEARCH_FIELD_MASK,
   buildGapRecommendations,
   buildRecommendations,
@@ -14,6 +14,7 @@ import {
   domainLabel,
   extractOwnProfile,
   extractPlaceData,
+  fetchSearchPages,
   formatRow,
   geocodeAddressParam,
   hostFromUrl,
@@ -21,10 +22,12 @@ import {
   matchBusiness,
   matchOwnProfile,
   needsDetails,
+  nextPageBody,
   normalizeDomain,
   normalizeNameForMatch,
   ownProfileFirstLine,
   ownProfileSearchBody,
+  pagesForDepth,
   parseArgs,
   parseEnvFile,
   parseTermList,
@@ -120,6 +123,181 @@ describe("searchTextBody", () => {
       pageSize: 20,
       rankPreference: "RELEVANCE"
     });
+  });
+});
+
+describe("pagesForDepth / nextPageBody", () => {
+  it("maps depth to page count, capped at 3 (60/20)", () => {
+    expect(pagesForDepth(20)).toBe(1);
+    expect(pagesForDepth(40)).toBe(2);
+    expect(pagesForDepth(60)).toBe(3);
+  });
+
+  it("repeats the initial search's parameters and adds pageToken (Google requires an exact match)", () => {
+    const center = { latitude: 1, longitude: 2 };
+    expect(nextPageBody("realtor near me", center, 15, "TOKEN123")).toEqual({
+      textQuery: "realtor near me",
+      locationBias: { circle: { center, radius: 15000 } },
+      pageSize: 20,
+      rankPreference: "RELEVANCE",
+      pageToken: "TOKEN123"
+    });
+  });
+});
+
+describe("fetchSearchPages (paginated merge, no real network/timers)", () => {
+  function makePage(n) {
+    return Array.from({ length: 20 }, (_, i) => makePlace({ name: `Page result ${n}-${i + 1}` }));
+  }
+
+  it("fetches a single page when depth is 20 (no pageToken ever used)", async () => {
+    const fetchPage = vi.fn().mockResolvedValue({ places: makePage(1), nextPageToken: "tok-2" });
+    const results = await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 20,
+      fetchPage
+    });
+    expect(results).toHaveLength(20);
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows nextPageToken across 3 pages to 60 results, business found on page 3", async () => {
+    const target = makePlace({ name: "Target Biz", website: "https://target.com" });
+    const page3 = makePage(3);
+    page3[0] = target; // index 40 overall (20 + 20 + 0) -> rank 41
+    const fetchPage = vi.fn(async (body) => {
+      if (!body.pageToken) return { places: makePage(1), nextPageToken: "tok-2" };
+      if (body.pageToken === "tok-2") return { places: makePage(2), nextPageToken: "tok-3" };
+      if (body.pageToken === "tok-3") return { places: page3, nextPageToken: null };
+      throw new Error(`unexpected pageToken ${body.pageToken}`);
+    });
+    const results = await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 60,
+      fetchPage
+    });
+    expect(results).toHaveLength(60);
+    expect(fetchPage).toHaveBeenCalledTimes(3);
+
+    const out = buildTermOutput({
+      term: "realtor near me",
+      place: "Marietta, GA",
+      results,
+      domain: "target.com",
+      top: 3
+    });
+    expect(out.rankLabel).toBe("41");
+    expect(out.rank).toBe(41);
+    expect(out.searched).toBe(60);
+    expect(out.recommendations[0]).toBe(
+      'Your listing is #41 of 60 results for "realtor near me" from Marietta, GA.'
+    );
+  });
+
+  it("stops early once depth is reached, even with a nextPageToken still available", async () => {
+    const fetchPage = vi.fn(async (body) => {
+      if (!body.pageToken) return { places: makePage(1), nextPageToken: "tok-2" };
+      return { places: makePage(2), nextPageToken: "tok-3" };
+    });
+    const results = await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 40,
+      fetchPage
+    });
+    expect(results).toHaveLength(40);
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops when a page has no nextPageToken, before reaching depth", async () => {
+    const fetchPage = vi.fn().mockResolvedValue({ places: makePage(1), nextPageToken: null });
+    const results = await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 60,
+      fetchPage
+    });
+    expect(results).toHaveLength(20);
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a page ONCE (with a delay) when a fresh pageToken isn't valid yet, then uses the retry's places", async () => {
+    let callsForPage2 = 0;
+    const fetchPage = vi.fn(async (body) => {
+      if (!body.pageToken) return { places: makePage(1), nextPageToken: "tok-2" };
+      callsForPage2 += 1;
+      if (callsForPage2 === 1) return { places: [], nextPageToken: undefined }; // token not valid yet
+      return { places: makePage(2), nextPageToken: null };
+    });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const results = await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 60,
+      fetchPage,
+      sleep
+    });
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(2000);
+    expect(results).toHaveLength(40); // page 1 (20) + the retried page 2 (20)
+    expect(fetchPage).toHaveBeenCalledTimes(3); // page 1, page 2 attempt 1 (empty), page 2 retry
+  });
+
+  it("never retries more than once - an empty retry is accepted as final", async () => {
+    let tok2Calls = 0;
+    const fetchPage = vi.fn(async (body) => {
+      if (!body.pageToken) return { places: makePage(1), nextPageToken: "tok-2" };
+      tok2Calls += 1;
+      // First attempt still claims more is coming; the retry (still empty) says there truly is none.
+      return { places: [], nextPageToken: tok2Calls === 1 ? "tok-2-again" : null };
+    });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const results = await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 60,
+      fetchPage,
+      sleep
+    });
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(results).toHaveLength(20); // only page 1 ever yielded places
+    expect(fetchPage).toHaveBeenCalledTimes(3); // page 1, page 2 attempt 1 (empty), page 2 retry (empty, terminal)
+  });
+
+  it("not found beyond a full 60-result search: NOT_IN_TOP_60 with searched: 60", async () => {
+    const fetchPage = vi.fn(async (body) => {
+      if (!body.pageToken) return { places: makePage(1), nextPageToken: "tok-2" };
+      if (body.pageToken === "tok-2") return { places: makePage(2), nextPageToken: "tok-3" };
+      return { places: makePage(3), nextPageToken: null };
+    });
+    const results = await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 60,
+      fetchPage
+    });
+    const out = buildTermOutput({
+      term: "realtor near me",
+      place: "Marietta, GA",
+      results,
+      domain: "notpresent.com",
+      top: 3
+    });
+    expect(out.rankLabel).toBe(NOT_IN_TOP_60);
+    expect(out.rank).toBeNull();
+    expect(out.searched).toBe(60);
+    expect(out.recommendations[0]).toBe(
+      'Your business does not appear in the top 60 results for "realtor near me" from Marietta, GA.'
+    );
   });
 });
 
@@ -254,8 +432,8 @@ describe("formatRow", () => {
   });
 
   it("fills every missing cell with the em dash, never a guess", () => {
-    expect(formatRow(NOT_IN_TOP_20, null)).toEqual([
-      NOT_IN_TOP_20,
+    expect(formatRow(NOT_IN_TOP_60, null)).toEqual([
+      NOT_IN_TOP_60,
       NA,
       NA,
       NA,
@@ -303,15 +481,16 @@ describe("buildRecommendations", () => {
     )
   ];
 
-  it("not-in-top-20 short-circuits to a single claim/verify recommendation", () => {
+  it("not-in-top-60 leads with the exact-position line, then a single claim/verify recommendation", () => {
     const recs = buildRecommendations({
       business: null,
-      businessRankLabel: NOT_IN_TOP_20,
+      businessRankLabel: NOT_IN_TOP_60,
       top3,
       term,
       place
     });
     expect(recs).toEqual([
+      `Your business does not appear in the top 60 results for "${term}" from ${place}.`,
       `No listing found for "${term}" from ${place} — claim/verify a Google Business Profile.`
     ]);
   });
@@ -330,6 +509,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: low,
       businessRankLabel: "7",
+      searched: 20,
       top3,
       term,
       place
@@ -353,6 +533,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: high,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -374,6 +555,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: lowRating,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -395,6 +577,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: okRating,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -416,6 +599,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: fewPhotos,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -437,6 +621,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: manyPhotos,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -458,6 +643,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: diffCategory,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -481,6 +667,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: sameCategory,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -502,6 +689,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: noHours,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -523,6 +711,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: hasHours,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -544,6 +733,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: noSite,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -566,6 +756,7 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business: withSite,
       businessRankLabel: "4",
+      searched: 20,
       top3,
       term,
       place
@@ -573,7 +764,7 @@ describe("buildRecommendations", () => {
     expect(recs.some((r) => r.startsWith("Link the website"))).toBe(false);
   });
 
-  it("never fabricates a number when the top 3 are missing the underlying field", () => {
+  it("leads with the exact-position line, never fabricates a gap number when the top 3 lack the field", () => {
     const noDataTop3 = [
       extractPlaceData(makePlace({ name: "A" })),
       extractPlaceData(makePlace({ name: "B" }))
@@ -591,11 +782,12 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({
       business,
       businessRankLabel: "1",
+      searched: 20,
       top3: noDataTop3,
       term,
       place
     });
-    expect(recs).toEqual([]);
+    expect(recs).toEqual([`Your listing is #1 of 20 results for "${term}" from ${place}.`]);
   });
 });
 
@@ -762,6 +954,8 @@ describe("buildTermOutput (full fixture, no network)", () => {
       top: 3
     });
     expect(out.rankLabel).toBe("7");
+    expect(out.rank).toBe(7);
+    expect(out.searched).toBe(8);
     expect(out.section).toContain(
       "| 1 | Top Realty | 4.9 | 212 | 10+ | Real estate agency | yes | yes |"
     );
@@ -790,13 +984,14 @@ describe("buildTermOutput (full fixture, no network)", () => {
       top: 3
     });
     expect(out.recommendations).toEqual([
+      'Your listing is #7 of 8 results for "realtor near me" from Marietta, GA.',
       "Get more Google reviews — the top 3 average 154; you have 19.",
       "Add more pictures — top 3 carry 10; you have 4.",
       "Publish business hours."
     ]);
   });
 
-  it("business absent from the results -> not in top 20, no fabricated rank", () => {
+  it("business absent from the results -> not in top 60, no fabricated rank", () => {
     const out = buildTermOutput({
       term: "realtor near me",
       place: "Marietta, GA",
@@ -804,8 +999,11 @@ describe("buildTermOutput (full fixture, no network)", () => {
       domain: "feltonandpeel.com",
       top: 3
     });
-    expect(out.rankLabel).toBe(NOT_IN_TOP_20);
+    expect(out.rankLabel).toBe(NOT_IN_TOP_60);
+    expect(out.rank).toBeNull();
+    expect(out.searched).toBe(7);
     expect(out.recommendations).toEqual([
+      'Your business does not appear in the top 60 results for "realtor near me" from Marietta, GA.',
       'No listing found for "realtor near me" from Marietta, GA — claim/verify a Google Business Profile.'
     ]);
     expect(out.section).toContain("claim/verify a Google Business Profile");
@@ -854,6 +1052,7 @@ describe("parseArgs", () => {
       env: ".env.local",
       radiusKm: 15,
       top: 3,
+      depth: 60,
       dryRun: false
     });
   });
@@ -876,6 +1075,8 @@ describe("parseArgs", () => {
       "20",
       "--top",
       "5",
+      "--depth",
+      "40",
       "--name",
       "Business Name",
       "--dry-run"
@@ -884,6 +1085,7 @@ describe("parseArgs", () => {
     expect(opts.env).toBe("/nonexistent");
     expect(opts.radiusKm).toBe(20);
     expect(opts.top).toBe(5);
+    expect(opts.depth).toBe(40);
     expect(opts.name).toBe("Business Name");
     expect(opts.dryRun).toBe(true);
   });
@@ -911,6 +1113,15 @@ describe("parseArgs", () => {
     expect(() => parseArgs([...base, "--radius-km", "-5"])).toThrow(/--radius-km/);
     expect(() => parseArgs([...base, "--top", "0"])).toThrow(/--top/);
     expect(() => parseArgs([...base, "--top", "2.5"])).toThrow(/--top/);
+  });
+
+  it("accepts --depth 20/40/60 and rejects anything else", () => {
+    const base = ["--domain", "d", "--terms", "t", "--place", "p", "--out", "o.md"];
+    expect(parseArgs([...base, "--depth", "20"]).depth).toBe(20);
+    expect(parseArgs([...base, "--depth", "40"]).depth).toBe(40);
+    expect(parseArgs([...base, "--depth", "60"]).depth).toBe(60);
+    expect(() => parseArgs([...base, "--depth", "10"])).toThrow(/--depth/);
+    expect(() => parseArgs([...base, "--depth", "80"])).toThrow(/--depth/);
   });
 });
 
@@ -1092,13 +1303,16 @@ describe("buildGapRecommendations (own-profile gaps builder, with/without own pr
     };
     const recs = buildRecommendations({
       business: null,
-      businessRankLabel: NOT_IN_TOP_20,
+      businessRankLabel: NOT_IN_TOP_60,
       top3,
       term,
       place,
       ownProfile
     });
     expect(recs[0]).toBe(
+      'Your business does not appear in the top 60 results for "software consultant near me" from Marietta, GA.'
+    );
+    expect(recs[1]).toBe(
       'Your profile exists (rating 4.6, 5 reviews, 2 photos, category Software company) but does not rank for "software consultant near me" from Marietta, GA.'
     );
     expect(recs).toContain("Get more Google reviews — the top 3 average 150; you have 5.");
@@ -1112,13 +1326,14 @@ describe("buildGapRecommendations (own-profile gaps builder, with/without own pr
   it("without an own profile (null): the claim/verify line, unchanged from today", () => {
     const recs = buildRecommendations({
       business: null,
-      businessRankLabel: NOT_IN_TOP_20,
+      businessRankLabel: NOT_IN_TOP_60,
       top3,
       term,
       place,
       ownProfile: null
     });
     expect(recs).toEqual([
+      `Your business does not appear in the top 60 results for "${term}" from ${place}.`,
       `No listing found for "${term}" from ${place} — claim/verify a Google Business Profile.`
     ]);
   });
@@ -1137,14 +1352,15 @@ describe("buildGapRecommendations (own-profile gaps builder, with/without own pr
     };
     const recs = buildRecommendations({
       business: null,
-      businessRankLabel: NOT_IN_TOP_20,
+      businessRankLabel: NOT_IN_TOP_60,
       top3,
       term,
       place,
       ownProfile
     });
-    expect(recs).toHaveLength(1);
-    expect(recs[0]).toContain("Your profile exists");
+    expect(recs).toHaveLength(2);
+    expect(recs[0]).toContain("does not appear in the top 60");
+    expect(recs[1]).toContain("Your profile exists");
   });
 });
 
