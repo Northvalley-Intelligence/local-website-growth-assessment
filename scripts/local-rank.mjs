@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // scripts/local-rank.mjs
 // ---------------------------------------------------------------------------
-// Where a business sits in Google's local listing for its own search terms,
-// plus what the top 3 businesses in the area do better -> a markdown section
-// for the complimentary website report.
+// Competitor analysis for a local search term: the top 5 competing businesses
+// (matched by category family, filled from the ranked list when fewer than 5
+// share the category) side by side with the business under test, plus
+// evidence-bearing suggestions -> a markdown section for the complimentary
+// website report.
 //
 // Data source: Google Maps Platform.
 //   - Geocoding API resolves the area centre (city/zip -> lat/lng).
@@ -21,9 +23,24 @@
 // is never told to "claim/verify" a profile it already has. Each term's JSON
 // carries `ownProfile` (null when no own profile was found or none looked
 // up because the business already ranked): { found, name, rating,
-// reviewCount, photoCount, primaryCategory, hoursListed, website, placeId }.
-// When found, the recommendations become concrete gaps vs the top 3 instead
-// of a claim/verify instruction.
+// reviewCount, photoCount, primaryCategory, hoursListed, website, placeId,
+// hasDescription, distanceMi }.
+//
+// Competitor analysis (H05): each term's JSON also carries `competitors` (up
+// to `--top`, default 5, businesses whose primary category matches "the
+// term's service" - the category shared by at least 2 results, else the
+// top-ranked result's category; when fewer than that many share it, the
+// ranked list fills the rest, each flagged `categoryMatch`), a unified
+// `client` row (the business under test, same attribute shape as a
+// competitor, `position` 1-60 or null, `status: "not showing"` only when
+// truly absent - no ranking AND no own profile), and `topCompetitor` (the
+// single highest-ranked OTHER business, regardless of category match, for
+// the report's page-1 call-out line). Suggestions compare the client against
+// the competitor set on reviews, photos, primary category, hours, website,
+// and business description - never fabricated when there is nothing to
+// compare against (a business with no discoverable profile at all gets the
+// claim/verify line only, not five guessed gaps against businesses it may
+// not even compete head-to-head with).
 //
 // Node built-ins only. No npm deps. Secrets are read from an env file
 // (default .env.local in CWD), held in memory only, and NEVER printed or
@@ -33,7 +50,7 @@
 //   node scripts/local-rank.mjs --domain <domain> --terms "<term>;<term>" \
 //     --place "<City, GA | zip>" --out <path.md> \
 //     [--json <path>] [--env <path>] [--name <business name>] \
-//     [--radius-km 15] [--top 3] [--depth 60] [--dry-run]
+//     [--radius-km 15] [--top 5] [--depth 60] [--dry-run]
 //
 // Exit codes: 0 ok · 1 bad input / missing env · 2 Google API failure.
 // ---------------------------------------------------------------------------
@@ -44,17 +61,21 @@ import { pathToFileURL } from "node:url";
 
 export const NA = "—"; // em dash - the ONLY placeholder for a null/absent value
 export const NOT_IN_TOP_60 = "not in top 60";
+export const NOT_SHOWING = "not showing"; // client.status: no rank AND no own profile found
+export const NOT_SHOWING_LABEL = "NOT SHOWING"; // table rank-cell label whenever client.position is null
 
 const GEOCODE_HOST = "https://maps.googleapis.com/maps/api/geocode/json";
 const PLACES_HOST = "https://places.googleapis.com/v1";
 const DEFAULT_RADIUS_KM = 15;
-const DEFAULT_TOP = 3;
+const DEFAULT_TOP = 5; // number of competitors shown/compared against (H05; was 3)
 const SEARCH_PAGE_SIZE = 20;
 const DEFAULT_DEPTH = 60;
 const VALID_DEPTHS = new Set([20, 40, 60]);
 const MAX_PAGES = 3;
 const PAGE_TOKEN_DELAY_MS = 2000; // Google's own guidance: a nextPageToken needs a short delay before it's valid.
 const OWN_PROFILE_PAGE_SIZE = 5;
+const EARTH_RADIUS_KM = 6371;
+const KM_TO_MILES = 0.621371;
 
 const REQUIRED_ENV_KEYS = ["GOOGLE_MAPS_API_KEY"];
 
@@ -68,7 +89,8 @@ export const GOOGLE_GUIDANCE_BLOCK = [
 ].join("\n");
 
 // Fields requested from the Places API - order matches the handoff's field
-// mask so the two are easy to diff by eye.
+// mask so the two are easy to diff by eye. `location` (H05) powers the
+// competitor/client distance-from-anchor figure.
 export const PLACE_FIELDS = [
   "id",
   "displayName",
@@ -83,7 +105,8 @@ export const PLACE_FIELDS = [
   "photos",
   "businessStatus",
   "googleMapsUri",
-  "editorialSummary"
+  "editorialSummary",
+  "location"
 ];
 
 export const SEARCH_FIELD_MASK = PLACE_FIELDS.map((f) => `places.${f}`).join(",");
@@ -113,8 +136,8 @@ function median(values) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-/** The category shared by at least 2 of the given values, else null (never guesses a majority of 1). */
-function majorityValue(values) {
+/** The value with the highest count among `values`, plus that count (0 when the list is empty). */
+function bestValueCount(values) {
   const counts = new Map();
   for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
   let best = null;
@@ -125,7 +148,17 @@ function majorityValue(values) {
       bestCount = c;
     }
   }
-  return bestCount >= 2 ? best : null;
+  return { value: best, count: bestCount };
+}
+
+/** The category shared by at least 2 of the given values, else null (never guesses a majority of 1). */
+function majorityValue(values) {
+  const { value, count } = bestValueCount(values);
+  return count >= 2 ? value : null;
+}
+
+function numOrZero(value) {
+  return value === null || value === undefined ? 0 : value;
 }
 
 function fail(message, code) {
@@ -192,6 +225,27 @@ export function geocodeAddressParam(place) {
 /** Kilometers -> meters, for the Places API locationBias circle radius. */
 export function kmToMeters(km) {
   return Math.round(toNumber(km) * 1000);
+}
+
+/**
+ * Great-circle distance in miles between two {latitude, longitude} points
+ * (haversine formula), rounded to 1 decimal. Null when either point is
+ * missing/unparseable - never a guessed distance.
+ */
+export function haversineMiles(a, b) {
+  const lat1 = a ? toNumber(a.latitude) : null;
+  const lon1 = a ? toNumber(a.longitude) : null;
+  const lat2 = b ? toNumber(b.latitude) : null;
+  const lon2 = b ? toNumber(b.longitude) : null;
+  if (lat1 === null || lon1 === null || lat2 === null || lon2 === null) return null;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const km = EARTH_RADIUS_KM * 2 * Math.asin(Math.sqrt(h));
+  return Math.round(km * KM_TO_MILES * 10) / 10;
 }
 
 /** The Places API searchText request body for one term, from a resolved centre. */
@@ -405,8 +459,10 @@ export function extractPlaceData(place) {
 /**
  * The `ownProfile` JSON record for one Places API result matched as the
  * business's own profile - null when there is no match (never fabricated).
+ * `hasDescription`/`distanceMi` (H05) reuse the same attribute vocabulary as
+ * a competitor row so `buildClientRow` can copy them across directly.
  */
-export function extractOwnProfile(place) {
+export function extractOwnProfile(place, center) {
   if (!place) return null;
   const data = extractPlaceData(place);
   return {
@@ -418,7 +474,9 @@ export function extractOwnProfile(place) {
     primaryCategory: data.primaryCategory,
     hoursListed: data.hasHours,
     website: data.websiteUri,
-    placeId: data.placeId
+    placeId: data.placeId,
+    hasDescription: Boolean(place.editorialSummary),
+    distanceMi: haversineMiles(center, place.location)
   };
 }
 
@@ -474,61 +532,229 @@ export function formatRow(rankLabel, data) {
 }
 
 /**
- * Recommendations comparing a business's extracted data against the top-N
- * businesses' extracted data. Each rule fires ONLY when its evidence says so;
- * numbers in the sentence come from the actual data, never invented. Shared
- * by the in-top-20 case and the not-in-top-20-but-own-profile-found case.
+ * One markdown table row for a competitor/client-shaped record (H05:
+ * `hoursListed` + `website` as a host string, rather than extractPlaceData's
+ * `hasHours`/`hasWebsite`/`websiteUri`). Delegates to `formatRow` so the
+ * cell formatting itself (em dash, photo cap, rating/review formatting)
+ * stays in exactly one place.
  */
-export function buildGapRecommendations({ business, top3 }) {
+export function formatCompetitorRow(rankLabel, data) {
+  if (!data) return formatRow(rankLabel, null);
+  return formatRow(rankLabel, {
+    name: data.name,
+    rating: data.rating,
+    reviewCount: data.reviewCount,
+    photoCount: data.photoCount,
+    photoCapped: data.photoCapped,
+    primaryCategory: data.primaryCategory,
+    hasHours: Boolean(data.hoursListed),
+    hasWebsite: Boolean(data.website)
+  });
+}
+
+/**
+ * "The term's service category family": the primaryCategory shared by at
+ * least 2 of the given (non-null) categories, else the first one seen (a
+ * majority of 1 is never claimed) - reusing the same category-agreement
+ * rule the suggestions builder uses for "N of 5 competitors list X". Null
+ * when nothing in the list carries a category at all.
+ */
+export function termServiceCategory(categories) {
+  const cats = (categories ?? []).filter(Boolean);
+  if (!cats.length) return null;
+  return majorityValue(cats) ?? cats[0];
+}
+
+/**
+ * Competitor/client attribute record from one raw Places API result:
+ * name, rating, reviewCount, photoCount(+Capped), primaryCategory,
+ * hoursListed, website (HOST, not the full URL), hasDescription (from
+ * editorialSummary), servicesCount (always null - the Places API exposes no
+ * such field), distanceMi (haversine from `center`, null if either point is
+ * missing). Null when there is no place (never fabricated).
+ */
+export function extractCompetitorData(place, center) {
+  if (!place) return null;
+  const base = extractPlaceData(place);
+  return {
+    name: base.name,
+    rating: base.rating,
+    reviewCount: base.reviewCount,
+    photoCount: base.photoCount,
+    photoCapped: base.photoCapped,
+    primaryCategory: base.primaryCategory,
+    hoursListed: base.hasHours,
+    website: hostFromUrl(base.websiteUri),
+    hasDescription: Boolean(place.editorialSummary),
+    servicesCount: null,
+    distanceMi: haversineMiles(center, place.location)
+  };
+}
+
+/**
+ * The top `count` competitors for a term: OTHER businesses (excludeIndex,
+ * the client's own index, is never a candidate) whose primaryCategory
+ * matches `termServiceCategory` come first, in rank order; when fewer than
+ * `count` match, the ranked list fills the remaining slots (categoryMatch:
+ * false) - never leaves a slot empty when candidates remain. Each entry
+ * keeps its original 1-based rank as `position`.
+ */
+export function selectCompetitors({ results, center, excludeIndex, count }) {
+  const list = results ?? [];
+  const extractedAll = list.map((p) => extractPlaceData(p));
+  const candidateCategories = extractedAll
+    .filter((_, i) => i !== excludeIndex)
+    .map((d) => d && d.primaryCategory);
+  const termCategory = termServiceCategory(candidateCategories);
+
+  const matched = [];
+  const unmatched = [];
+  list.forEach((place, i) => {
+    if (i === excludeIndex) return;
+    const cat = extractedAll[i] && extractedAll[i].primaryCategory;
+    const categoryMatch = termCategory !== null && cat === termCategory;
+    (categoryMatch ? matched : unmatched).push({ place, position: i + 1, categoryMatch });
+  });
+
+  return [...matched, ...unmatched].slice(0, count).map((entry) => ({
+    position: entry.position,
+    categoryMatch: entry.categoryMatch,
+    ...extractCompetitorData(entry.place, center)
+  }));
+}
+
+/**
+ * The single highest-ranked OTHER business for a term (excludeIndex never a
+ * candidate), regardless of category match - used only for the report's
+ * page-1 "top competitor <name>" call-out line, which means Google's most
+ * relevant result, not necessarily one of the category-filtered
+ * `competitors`. Null when there are no other results at all.
+ */
+export function topCompetitorFor({ results, excludeIndex, center }) {
+  const list = results ?? [];
+  for (let i = 0; i < list.length; i += 1) {
+    if (i === excludeIndex) continue;
+    return { position: i + 1, ...extractCompetitorData(list[i], center) };
+  }
+  return null;
+}
+
+/**
+ * The unified client row: same attribute shape as a competitor, plus
+ * `position` (1-60, or null) and `status` ("not showing" ONLY when there is
+ * truly no data at all - no rank AND no own profile; null otherwise, even
+ * when the business does not rank but its own profile was found).
+ *   - Ranked (`place` given): attributes from that raw Places result.
+ *   - Not ranked, own profile found: attributes from `ownProfile` (website
+ *     converted to a host, matching the competitor shape).
+ *   - Neither: every attribute null, status "not showing".
+ */
+export function buildClientRow({ place, rank, ownProfile, center }) {
+  if (place) {
+    return { position: rank, status: null, ...extractCompetitorData(place, center) };
+  }
+  if (ownProfile && ownProfile.found) {
+    return {
+      position: null,
+      status: null,
+      name: ownProfile.name,
+      rating: ownProfile.rating,
+      reviewCount: ownProfile.reviewCount,
+      photoCount: ownProfile.photoCount,
+      photoCapped: ownProfile.photoCount === 10,
+      primaryCategory: ownProfile.primaryCategory,
+      hoursListed: ownProfile.hoursListed,
+      website: hostFromUrl(ownProfile.website),
+      hasDescription: Boolean(ownProfile.hasDescription),
+      servicesCount: null,
+      distanceMi: ownProfile.distanceMi ?? null
+    };
+  }
+  return {
+    position: null,
+    status: NOT_SHOWING,
+    name: null,
+    rating: null,
+    reviewCount: null,
+    photoCount: null,
+    photoCapped: null,
+    primaryCategory: null,
+    hoursListed: null,
+    website: null,
+    hasDescription: null,
+    servicesCount: null,
+    distanceMi: null
+  };
+}
+
+/**
+ * Suggestions comparing the client against its competitor set, one sentence
+ * per attribute where the client is below the competitors' median (numeric)
+ * or lacks what most competitors have (category/hours/website/description) -
+ * numbers always come from the actual competitor data, never invented. A
+ * missing client value is treated as 0/absent (it is what the searcher
+ * actually sees), so it triggers the same sentence as a low value - this is
+ * only ever called for a client with SOME known data (ranked, or its own
+ * profile was found); see `buildRecommendations`.
+ */
+export function buildCompetitorSuggestions({ client, competitors }) {
   const recs = [];
-  const others = top3 ?? [];
+  const others = (competitors ?? []).filter(Boolean);
+  const total = others.length;
+  if (!total) return recs;
 
-  const reviews3 = others.map((t) => t.reviewCount).filter((v) => v !== null);
-  if (reviews3.length && business.reviewCount !== null) {
-    const med = median(reviews3);
-    if (business.reviewCount < med) {
-      const avg = Math.round(mean(reviews3));
+  const reviewVals = others.map((c) => c.reviewCount).filter((v) => v !== null && v !== undefined);
+  if (reviewVals.length) {
+    const clientReviews = numOrZero(client && client.reviewCount);
+    if (clientReviews < median(reviewVals)) {
+      const avg = Math.round(mean(reviewVals));
       recs.push(
-        `Get more Google reviews — the top 3 average ${avg}; you have ${business.reviewCount}.`
+        `Competitors average ${avg} reviews; you have ${clientReviews} — ask your last 10 clients for a Google review.`
       );
     }
   }
 
-  const ratings3 = others.map((t) => t.rating).filter((v) => v !== null);
-  if (ratings3.length && business.rating !== null) {
-    const min3 = Math.min(...ratings3);
-    if (business.rating < 4.5 && business.rating < min3) {
+  const photoVals = others.map((c) => c.photoCount).filter((v) => v !== null && v !== undefined);
+  if (photoVals.length) {
+    const clientPhotos = numOrZero(client && client.photoCount);
+    if (clientPhotos < median(photoVals)) {
+      const avg = Math.round(mean(photoVals));
       recs.push(
-        `Respond to reviews; rating ${business.rating.toFixed(1)} vs top-3 ${min3.toFixed(1)}.`
+        `Competitors average ${avg} photos; you have ${clientPhotos} — add more photos of your work.`
       );
     }
   }
 
-  const photos3 = others.map((t) => t.photoCount).filter((v) => v !== null);
-  if (photos3.length && business.photoCount !== null) {
-    const med = median(photos3);
-    if (business.photoCount < med) {
-      recs.push(
-        `Add more pictures — top 3 carry ${Math.round(med)}; you have ${formatCount(business.photoCount, business.photoCapped)}.`
-      );
-    }
+  const { value: bestCategory, count: categoryCount } = bestValueCount(
+    others.map((c) => c.primaryCategory).filter(Boolean)
+  );
+  const clientCategory = (client && client.primaryCategory) || null;
+  if (bestCategory && categoryCount >= 2 && clientCategory !== bestCategory) {
+    const yours = clientCategory ? `"${clientCategory}"` : "not set";
+    recs.push(
+      `${categoryCount} of ${total} competitors list "${bestCategory}" as primary category; yours is ${yours} — change it.`
+    );
   }
 
-  const cats3 = others.map((t) => t.primaryCategory).filter(Boolean);
-  if (cats3.length) {
-    const majority = majorityValue(cats3);
-    if (majority && business.primaryCategory !== majority) {
-      recs.push(`Set primary category to ${majority} (top 3 use it).`);
-    }
+  const hoursCount = others.filter((c) => c.hoursListed).length;
+  if (!(client && client.hoursListed) && hoursCount >= 2) {
+    recs.push(
+      `${hoursCount} of ${total} competitors list business hours; yours are not published — add your hours.`
+    );
   }
 
-  const hoursCount3 = others.filter((t) => t.hasHours).length;
-  if (!business.hasHours && hoursCount3 >= 2) {
-    recs.push("Publish business hours.");
+  const websiteCount = others.filter((c) => c.website).length;
+  if (!(client && client.website) && websiteCount >= 2) {
+    recs.push(
+      `${websiteCount} of ${total} competitors link a website; yours does not — link your website to your profile.`
+    );
   }
 
-  if (!business.hasWebsite) {
-    recs.push("Link the website to the profile.");
+  const descriptionCount = others.filter((c) => c.hasDescription).length;
+  if (!(client && client.hasDescription) && descriptionCount >= 2) {
+    recs.push(
+      `${descriptionCount} of ${total} competitors have a business description on their profile; yours does not — add one.`
+    );
   }
 
   return recs;
@@ -545,66 +771,51 @@ export function notFoundPositionLine({ term, place }) {
 }
 
 /**
- * Recommendations for one term: an exact-position line first (found or not),
- * then gaps vs the top 3 when the business ranks (or its own profile was
- * found even though it does not rank - honest gaps, never a fabricated
- * "claim/verify" when a profile already exists); the claim/verify line only
- * when there is truly no profile.
+ * Recommendations for one term, built from the unified `client` row (see
+ * `buildClientRow`) and its `competitors` set:
+ *   - status "not showing" (no rank, no own profile): the exact-position
+ *     line + the claim/verify line only - never a fabricated gap against
+ *     competitors for a business with no discoverable profile at all.
+ *   - not ranked, own profile found (`position === null`, status not "not
+ *     showing"): the exact-position line + "Your profile exists ..." +
+ *     competitor-comparison suggestions.
+ *   - ranked: the exact-position line + competitor-comparison suggestions.
  */
-export function buildRecommendations({
-  business,
-  businessRankLabel,
-  top3,
-  term,
-  place,
-  ownProfile,
-  searched
-}) {
-  if (businessRankLabel === NOT_IN_TOP_60 || !business) {
-    const notFound = notFoundPositionLine({ term, place });
-    if (ownProfile && ownProfile.found) {
-      const adapted = {
-        rating: ownProfile.rating,
-        reviewCount: ownProfile.reviewCount,
-        photoCount: ownProfile.photoCount,
-        photoCapped: ownProfile.photoCount === 10,
-        primaryCategory: ownProfile.primaryCategory,
-        hasHours: Boolean(ownProfile.hoursListed),
-        hasWebsite: Boolean(ownProfile.website)
-      };
-      return [
-        notFound,
-        ownProfileFirstLine({ ownProfile, term, place }),
-        ...buildGapRecommendations({ business: adapted, top3 })
-      ];
-    }
+export function buildRecommendations({ client, competitors, term, place, searched }) {
+  if (client.status === NOT_SHOWING) {
     return [
-      notFound,
+      notFoundPositionLine({ term, place }),
       `No listing found for "${term}" from ${place} — claim/verify a Google Business Profile.`
     ];
   }
-
+  if (client.position === null) {
+    return [
+      notFoundPositionLine({ term, place }),
+      ownProfileFirstLine({ ownProfile: client, term, place }),
+      ...buildCompetitorSuggestions({ client, competitors })
+    ];
+  }
   return [
-    foundPositionLine({ rankLabel: businessRankLabel, searched, term, place }),
-    ...buildGapRecommendations({ business, top3 })
+    foundPositionLine({ rankLabel: String(client.position), searched, term, place }),
+    ...buildCompetitorSuggestions({ client, competitors })
   ];
 }
 
-/** One term's table + recommendations section (no trailing guidance block - renderMarkdown appends that once). */
+/** One term's table + suggestions section (no trailing guidance block - renderMarkdown appends that once). */
 export function renderTermSection({ term, place, rows, recommendations }) {
   const tableRows = rows.map((r) => {
     const cells = r.isBusiness ? r.cells.map((c) => `**${c}**`) : r.cells;
     return `| ${cells.join(" | ")} |`;
   });
   const lines = [
-    `## Where you are in the business listing — "${term}" from ${place}`,
+    `## Competitor analysis — "${term}" from ${place}`,
     "",
     TABLE_HEADER,
     TABLE_SEP,
     ...tableRows
   ];
   if (recommendations.length) {
-    lines.push("", "**Recommendations**", "");
+    lines.push("", "**Suggestions**", "");
     for (const rec of recommendations) lines.push(`- ${rec}`);
   }
   return lines.join("\n");
@@ -616,40 +827,48 @@ export function renderMarkdown({ sections }) {
 }
 
 /**
- * Assemble one term's rows + recommendations from a searchText-shaped
- * `results` array (Google's own relevance order = the local ranking).
+ * Assemble one term's competitors + client row + suggestions from a
+ * searchText-shaped `results` array (Google's own relevance order = the
+ * local ranking). The client row is ALWAYS its own table row (bold),
+ * labelled "NOT SHOWING" whenever it has no numeric position - even when an
+ * own profile was found, so the printed table always makes absence obvious
+ * at a glance - never duplicated among the `competitors` (the client's own
+ * index is always excluded from competitor selection).
  */
-export function buildTermOutput({ term, place, results, domain, name, top, ownProfile }) {
+export function buildTermOutput({ term, place, results, domain, name, top, ownProfile, center }) {
   const list = results ?? [];
   const searched = list.length;
   const idx = matchBusiness(list, domain, name);
   const rankLabel = idx === null ? NOT_IN_TOP_60 : String(idx + 1);
-  const topResults = list.slice(0, top);
-  const topData = topResults.map(extractPlaceData);
-  const businessData = idx === null ? null : extractPlaceData(list[idx]);
 
-  const rows = topResults.map((r, i) => ({
-    isBusiness: idx === i,
-    cells: formatRow(String(i + 1), topData[i])
-  }));
-  if (idx !== null && idx >= top) {
-    rows.push({ isBusiness: true, cells: formatRow(rankLabel, businessData) });
-  }
-
-  const recommendations = buildRecommendations({
-    business: businessData,
-    businessRankLabel: rankLabel,
-    top3: topData,
-    term,
-    place,
+  const competitors = selectCompetitors({ results: list, center, excludeIndex: idx, count: top });
+  const client = buildClientRow({
+    place: idx === null ? null : list[idx],
+    rank: idx === null ? null : idx + 1,
     ownProfile,
-    searched
+    center
   });
+  const topCompetitor = topCompetitorFor({ results: list, excludeIndex: idx, center });
+
+  const rows = competitors.map((c) => ({
+    isBusiness: false,
+    cells: formatCompetitorRow(String(c.position), c)
+  }));
+  const clientRankLabel = client.position !== null ? String(client.position) : NOT_SHOWING_LABEL;
+  rows.push({
+    isBusiness: true,
+    cells: formatCompetitorRow(clientRankLabel, client.status === NOT_SHOWING ? null : client)
+  });
+
+  const recommendations = buildRecommendations({ client, competitors, term, place, searched });
 
   return {
     rank: idx === null ? null : idx + 1,
     rankLabel,
     searched,
+    client,
+    competitors,
+    topCompetitor,
     section: renderTermSection({ term, place, rows, recommendations }),
     recommendations
   };
@@ -669,13 +888,13 @@ export function describeApiError(status, json) {
 // --------------------------------------------------------------------------
 
 const USAGE = [
-  "Where a business ranks in Google's local listing -> markdown for the complimentary report",
+  "Competitor analysis for a local search term -> markdown for the complimentary report",
   "",
   "Usage:",
   '  node scripts/local-rank.mjs --domain <domain> --terms "<term>;<term>" \\',
   '    --place "<City, GA | zip>" --out <path.md> \\',
   "    [--json <path>] [--env <path>] [--name <business name>] \\",
-  "    [--radius-km 15] [--top 3] [--depth 20|40|60] [--dry-run]",
+  "    [--radius-km 15] [--top 5] [--depth 20|40|60] [--dry-run]",
   "",
   "Env keys (from --env, default .env.local in CWD; process env is a fallback):",
   ...REQUIRED_ENV_KEYS.map((k) => `  ${k} (required)`),
@@ -776,7 +995,7 @@ function printDryRun(opts, terms, envState) {
     `Terms (${terms.length}): ${terms.join("; ")}`,
     `Place:   ${opts.place}`,
     `Radius:  ${opts.radiusKm} km`,
-    `Top N:   ${opts.top}`,
+    `Competitors: ${opts.top}`,
     `Depth:   ${opts.depth} (${pagesForDepth(opts.depth)} page(s) of ${SEARCH_PAGE_SIZE})`,
     `Env file:   ${opts.env}${envState.envFileFound ? "" : " (not found; process env only)"}`,
     `Env keys present (values NEVER shown): ${REQUIRED_ENV_KEYS.join(", ")}`,
@@ -906,7 +1125,7 @@ async function searchOwnProfileText(name, place, apiKey) {
  * used only for a term whose searched depth does not contain the business.
  * Never fabricates a match: null when the dedicated search finds nothing.
  */
-async function lookupOwnProfile({ domain, name, place, apiKey }) {
+async function lookupOwnProfile({ domain, name, place, apiKey, center }) {
   const resolvedName = resolveBusinessName(name, domain);
   process.stdout.write(
     `Own-profile lookup: "${resolvedName}" was not found - running one extra Places search for its own profile.\n`
@@ -915,7 +1134,7 @@ async function lookupOwnProfile({ domain, name, place, apiKey }) {
   const idx = matchOwnProfile(rawResults, domain, name || resolvedName);
   if (idx === null) return null;
   const complete = await completeResult(rawResults[idx], apiKey);
-  return extractOwnProfile(complete);
+  return extractOwnProfile(complete, center);
 }
 
 // --------------------------------------------------------------------------
@@ -981,20 +1200,21 @@ async function main() {
     // One extra API call per unranked term only - never when the business already ranks.
     const ownProfile =
       idx === null
-        ? await lookupOwnProfile({ domain: opts.domain, name: opts.name, place: opts.place, apiKey })
+        ? await lookupOwnProfile({ domain: opts.domain, name: opts.name, place: opts.place, apiKey, center })
         : null;
 
-    const { rank, searched, section, recommendations } = buildTermOutput({
+    const { rank, searched, section, recommendations, client, competitors, topCompetitor } = buildTermOutput({
       term,
       place: opts.place,
       results,
       domain: opts.domain,
       name: opts.name,
       top: opts.top,
-      ownProfile
+      ownProfile,
+      center
     });
     sections.push(section);
-    jsonTerms.push({ term, rank, searched, results, recommendations, ownProfile });
+    jsonTerms.push({ term, rank, searched, client, competitors, topCompetitor, recommendations, ownProfile, results });
   }
 
   const markdown = renderMarkdown({ sections });
