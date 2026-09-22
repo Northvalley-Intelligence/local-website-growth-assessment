@@ -327,7 +327,8 @@ export function renderMarkdown({
     [header, sep, ...rows.map((cells) => `| ${cells.join(" | ")} |`)].join("\n");
 
   return [
-    `# Demand data — ${title} (Keyword Planner, pulled ${pulled})`,
+    `# Demand data — ${title} (Google Ads historical search estimates — approximate, close variants included; pulled ${pulled})`,
+    "Volumes are Google Keyword Planner historical estimates for the selected geography; overlapping terms must not be added together.",
     "",
     `## Lane A — National baseline (geo: ${national.geoLabel})`,
     "Caveat: national volumes describe category shape, not local demand.",
