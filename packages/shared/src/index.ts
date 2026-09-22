@@ -284,6 +284,8 @@ export type ExtractedSignals = {
     mobileViewportFound: boolean;
     openGraphImageFound: boolean;
     localBusinessSchemaFound: boolean;
+    iconLinkFound: boolean;
+    schemaTypes: string[];
   }>;
   phoneNumbers: string[];
   clickToCallLinks: string[];
@@ -291,6 +293,7 @@ export type ExtractedSignals = {
   ctaPhrases: string[];
   cityOrServiceAreaMentions: string[];
   localBusinessSchemaFound: boolean;
+  schemaTypes: string[];
   locationPageUrls: string[];
   mapsOrBusinessProfileLinks: string[];
   testimonialMentions: string[];

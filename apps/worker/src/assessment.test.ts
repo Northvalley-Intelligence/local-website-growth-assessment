@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   assessWebsite,
   crawlWebsite,
+  extractSignals,
   InsufficientEvidenceError,
   type FetchAdapter
 } from "./index.js";
@@ -206,7 +207,6 @@ describe("Phase 1 assessment pipeline", () => {
               <title>Medina Hair Salon serving Valley City</title>
               <meta name="description" content="Locally owned hair salon near Medina." />
               <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <meta property="og:image" content="/salon.jpg" />
               <link rel="icon" href="/favicon.ico" />
               <script type="application/ld+json">{"@type":"LocalBusiness"}</script>
             </head>
@@ -981,5 +981,259 @@ describe("Phase 1 assessment pipeline", () => {
     });
     expect(report.demandSatisfaction.score).not.toBeNull();
     expect(report.demandSatisfaction.foundSummary.length).toBeGreaterThan(0);
+  });
+});
+
+describe("favicon and structured-data detection", () => {
+  it("detects <link rel=icon> even when /favicon.ico is broken, with evidence naming the link tag", async () => {
+    const { fetchAdapter } = mockedSite(
+      {
+        "https://example.com/": `
+          <html><head>
+            <title>Rick Mottern Roofing serving North Georgia</title>
+            <link rel="icon" href="/brand.svg" />
+          </head>
+          <body>
+            <h1>Roofing services for homeowners</h1>
+            <p>${"Roofing and construction services for homeowners across North Georgia. ".repeat(20)}</p>
+          </body></html>`
+      },
+      { broken: ["https://example.com/favicon.ico"] }
+    );
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        crawlDelayMs: 0,
+        now: () => new Date("2026-06-05T12:00:00.000Z")
+      }
+    );
+    const securityCategory = report.categories.find(
+      (category) => category.category === "securityReliability"
+    );
+    const iconFactor = securityCategory?.factors.find(
+      (factor) => factor.check === "Site icon"
+    );
+
+    expect(iconFactor?.passed).toBe(true);
+    expect(iconFactor?.evidenceDetails.join(" ")).toMatch(/link rel=icon/i);
+  });
+
+  it("detects a responding /favicon.ico when no <link rel=icon> tag is present", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `
+        <html><head><title>Rick Mottern Plumbing serving North Georgia</title></head>
+        <body>
+          <h1>Plumbing services for homeowners</h1>
+          <p>${"Plumbing repair and installation services for homeowners across North Georgia. ".repeat(20)}</p>
+        </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        crawlDelayMs: 0,
+        now: () => new Date("2026-06-05T12:00:00.000Z")
+      }
+    );
+    const securityCategory = report.categories.find(
+      (category) => category.category === "securityReliability"
+    );
+    const iconFactor = securityCategory?.factors.find(
+      (factor) => factor.check === "Site icon"
+    );
+
+    expect(iconFactor?.passed).toBe(true);
+    expect(iconFactor?.evidenceDetails.join(" ")).toMatch(/favicon\.ico/i);
+  });
+
+  it("does not treat an <a href> icon link or a broken /favicon.ico as a favicon", async () => {
+    const { fetchAdapter } = mockedSite(
+      {
+        "https://example.com/": `<html><body><a href="/icons/">Icons</a><p>Some content.</p></body></html>`
+      },
+      { broken: ["https://example.com/favicon.ico"] }
+    );
+
+    const crawl = await crawlWebsite(new URL("https://example.com/"), fetchAdapter, {
+      crawlDelayMs: 0
+    });
+    const signals = await extractSignals(
+      new URL("https://example.com/"),
+      crawl.pages,
+      fetchAdapter,
+      {}
+    );
+
+    expect(signals.pages[0]?.iconLinkFound).toBe(false);
+    expect(signals.faviconFound).toBe(false);
+  });
+
+  it("detects JSON-LD InsuranceAgency as a LocalBusiness-subtype schema", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `
+        <html><head>
+          <title>Rick Mottern Insurance Agency</title>
+          <script type="application/ld+json">{"@context":"https://schema.org","@type":"InsuranceAgency","name":"Rick Mottern Insurance"}</script>
+        </head>
+        <body>
+          <h1>Insurance services for families</h1>
+          <p>${"Insurance planning and coverage services for families across North Georgia. ".repeat(20)}</p>
+        </body></html>`
+    });
+
+    const crawl = await crawlWebsite(new URL("https://example.com/"), fetchAdapter, {
+      crawlDelayMs: 0
+    });
+    const signals = await extractSignals(
+      new URL("https://example.com/"),
+      crawl.pages,
+      fetchAdapter,
+      {}
+    );
+    expect(signals.localBusinessSchemaFound).toBe(true);
+    expect(signals.schemaTypes).toContain("InsuranceAgency");
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        crawlDelayMs: 0,
+        now: () => new Date("2026-06-05T12:00:00.000Z")
+      }
+    );
+    const localVisibility = report.categories.find(
+      (category) => category.category === "localVisibility"
+    );
+    const schemaFactor = localVisibility?.factors.find(
+      (factor) => factor.check === "Structured business information"
+    );
+
+    expect(schemaFactor?.passed).toBe(true);
+    expect(schemaFactor?.evidenceDetails.join(" ")).toContain("InsuranceAgency");
+  });
+
+  it("detects Organization inside @graph and notes it is a generic (not LocalBusiness-subtype) schema", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `
+        <html><head>
+          <title>Acme Consulting</title>
+          <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","name":"Acme Consulting"},{"@type":"Organization","name":"Acme Consulting"}]}</script>
+        </head>
+        <body>
+          <h1>Consulting services for growing businesses</h1>
+          <p>${"Consulting and advisory services for growing businesses across North Georgia. ".repeat(20)}</p>
+        </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        crawlDelayMs: 0,
+        now: () => new Date("2026-06-05T12:00:00.000Z")
+      }
+    );
+    const localVisibility = report.categories.find(
+      (category) => category.category === "localVisibility"
+    );
+    const schemaFactor = localVisibility?.factors.find(
+      (factor) => factor.check === "Structured business information"
+    );
+
+    expect(schemaFactor?.passed).toBe(true);
+    expect(schemaFactor?.evidenceDetails.join(" ")).toContain(
+      "Organization schema found"
+    );
+  });
+
+  it("does not treat WebPage/FAQPage JSON-LD types as business schema", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `
+        <html><head>
+          <title>Acme FAQ</title>
+          <script type="application/ld+json">{"@type":["WebPage","FAQPage"]}</script>
+        </head>
+        <body>
+          <h1>Frequently asked questions</h1>
+          <p>${"Answers to frequently asked questions about our services. ".repeat(20)}</p>
+        </body></html>`
+    });
+
+    const crawl = await crawlWebsite(new URL("https://example.com/"), fetchAdapter, {
+      crawlDelayMs: 0
+    });
+    const signals = await extractSignals(
+      new URL("https://example.com/"),
+      crawl.pages,
+      fetchAdapter,
+      {}
+    );
+    expect(signals.schemaTypes).toEqual(expect.arrayContaining(["WebPage", "FAQPage"]));
+    expect(signals.localBusinessSchemaFound).toBe(false);
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        crawlDelayMs: 0,
+        now: () => new Date("2026-06-05T12:00:00.000Z")
+      }
+    );
+    const localVisibility = report.categories.find(
+      (category) => category.category === "localVisibility"
+    );
+    const schemaFactor = localVisibility?.factors.find(
+      (factor) => factor.check === "Structured business information"
+    );
+    expect(schemaFactor?.passed).toBe(false);
+  });
+
+  it("detects microdata itemtype=schema.org/LocalBusiness", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>
+        <div itemscope itemtype="https://schema.org/LocalBusiness">
+          <span itemprop="name">Acme Cleaning</span>
+        </div>
+        <p>Some content.</p>
+      </body></html>`
+    });
+
+    const crawl = await crawlWebsite(new URL("https://example.com/"), fetchAdapter, {
+      crawlDelayMs: 0
+    });
+    const signals = await extractSignals(
+      new URL("https://example.com/"),
+      crawl.pages,
+      fetchAdapter,
+      {}
+    );
+
+    expect(signals.pages[0]?.schemaTypes).toContain("LocalBusiness");
+    expect(signals.localBusinessSchemaFound).toBe(true);
+  });
+
+  it("does not throw on malformed JSON-LD and treats it as not found", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>
+        <script type="application/ld+json">{"@type": </script>
+        <p>Some content.</p>
+      </body></html>`
+    });
+
+    const crawl = await crawlWebsite(new URL("https://example.com/"), fetchAdapter, {
+      crawlDelayMs: 0
+    });
+    const signals = await extractSignals(
+      new URL("https://example.com/"),
+      crawl.pages,
+      fetchAdapter,
+      {}
+    );
+
+    expect(signals.localBusinessSchemaFound).toBe(false);
+    expect(signals.pages[0]?.schemaTypes ?? []).not.toContain("LocalBusiness");
   });
 });
