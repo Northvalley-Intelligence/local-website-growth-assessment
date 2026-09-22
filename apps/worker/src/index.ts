@@ -450,6 +450,7 @@ export async function extractSignals(
       "local"
     ]),
     localBusinessSchemaFound: pages.some((page) => page.localBusinessSchemaFound),
+    schemaTypes: unique(pages.flatMap((page) => page.schemaTypes)).sort(),
     locationPageUrls: allLinks.filter((link) =>
       /location|service-area|service-areas|areas-we-serve|areas-served|areas-de-servicio|near|woodstock|marietta|kennesaw|acworth|canton|roswell/i.test(
         link
@@ -515,7 +516,11 @@ export async function extractSignals(
     brokenLinks: linkChecks,
     brokenImages: imageChecks,
     https: startedUrl.protocol === "https:",
-    faviconFound: allLinks.some((link) => /favicon|icon/i.test(link)),
+    faviconFound:
+      pages.some((page) => page.iconLinkFound) ||
+      (await faviconExists(startedUrl, fetchAdapter, {
+        requestTimeoutMs: options.requestTimeoutMs
+      })),
     openGraphImageFound: pages.some((page) => page.openGraphImageFound),
     sitemapFound: await sitemapExists(startedUrl, fetchAdapter, {
       requestTimeoutMs: options.requestTimeoutMs
@@ -538,6 +543,8 @@ function scoreSignals(
     "Google Maps or Google Business links found",
     signals.mapsOrBusinessProfileLinks
   );
+  const schemaFoundReview = schemaEvidenceDetails(signals);
+  const faviconFoundReview = faviconEvidenceDetails(signals);
 
   return [
     buildCategory(
@@ -590,7 +597,7 @@ function scoreSignals(
           "We found public website content, but not the machine-readable business information that helps Google and AI systems confidently understand who you are, where you operate, and what services you provide.",
           "A biography, address, or service page helps human visitors. LocalBusiness schema is an additional machine-readable signal for search engines, AI assistants, and local discovery systems.",
           "Add LocalBusiness schema with business name, service area, phone number, address if public, and core services.",
-          { missingDetails: reviewedPages }
+          { foundDetails: schemaFoundReview, missingDetails: reviewedPages }
         ),
         evidence(
           signals.locationPageUrls.length > 0,
@@ -985,7 +992,8 @@ function scoreSignals(
           "Favicon was not found.",
           "A site icon helps the website look polished in browser tabs, search results, and shared links.",
           "Branding on the page helps visitors; a favicon helps recognition in browser and search surfaces.",
-          "Add a favicon or site icon."
+          "Add a favicon or site icon.",
+          { foundDetails: faviconFoundReview, missingDetails: reviewedPages }
         ),
         evidence(
           signals.openGraphImageFound,
@@ -1320,6 +1328,49 @@ function testimonialEvidenceDetails(signals: ExtractedSignals): string[] {
   ]);
 }
 
+function schemaEvidenceDetails(signals: ExtractedSignals): string[] {
+  const perPage = signals.pages
+    .filter((page) => page.schemaTypes.length > 0)
+    .slice(0, 8)
+    .map((page) => `JSON-LD @type: ${page.schemaTypes.join(", ")} (${page.url})`);
+
+  const businessTypesFound = signals.schemaTypes.filter((type) =>
+    BUSINESS_SCHEMA_TYPES.has(type)
+  );
+  const onlyGenericOrgType =
+    businessTypesFound.length > 0 &&
+    businessTypesFound.every(
+      (type) => type === "Organization" || type === "Corporation"
+    );
+
+  const details = [...perPage];
+  if (onlyGenericOrgType) {
+    details.push(
+      "Organization schema found; a LocalBusiness subtype would add service-area/local signals."
+    );
+  }
+  if (details.length === 0 && signals.localBusinessSchemaFound) {
+    details.push("LocalBusiness schema text found on crawled pages.");
+  }
+  return details;
+}
+
+function faviconEvidenceDetails(signals: ExtractedSignals): string[] {
+  const pagesWithIconLink = signals.pages.filter((page) => page.iconLinkFound);
+  const details: string[] = [];
+  if (pagesWithIconLink.length > 0) {
+    details.push(
+      `<link rel=icon> found on ${pagesWithIconLink.length} crawled page${
+        pagesWithIconLink.length === 1 ? "" : "s"
+      }.`
+    );
+  }
+  if (pagesWithIconLink.length === 0 && signals.faviconFound) {
+    details.push("/favicon.ico responded 200.");
+  }
+  return details;
+}
+
 function signalEvidenceDetails(
   baseDetails: string[],
   label: string,
@@ -1630,6 +1681,9 @@ function parsePage(
   const images = collectAttributes(html, "img", "src");
   const imageDetails = collectImageDetails(html);
   const text = htmlToSearchableText(html);
+  const schemaTypes = extractSchemaTypes(html);
+  const legacyLocalBusinessSchemaMatch =
+    /"@type"\s*:\s*"[^"]*LocalBusiness|LocalBusiness/i.test(html);
 
   return {
     url,
@@ -1646,11 +1700,271 @@ function parsePage(
     truncated: readResult.truncated,
     mobileViewportFound: /<meta[^>]+name=["']viewport["'][^>]*>/i.test(html),
     openGraphImageFound: /<meta[^>]+property=["']og:image["'][^>]*>/i.test(html),
-    localBusinessSchemaFound: /"@type"\s*:\s*"[^"]*LocalBusiness|LocalBusiness/i.test(
-      html
-    )
+    iconLinkFound: hasIconLinkTag(html),
+    schemaTypes,
+    localBusinessSchemaFound:
+      schemaTypes.some((type) => BUSINESS_SCHEMA_TYPES.has(type)) ||
+      legacyLocalBusinessSchemaMatch
   };
 }
+
+/**
+ * Whether the HTML declares a <link> tag whose rel attribute contains the
+ * token "icon" — covers rel="icon", rel="shortcut icon", rel="apple-touch-icon",
+ * rel="mask-icon", regardless of attribute order or quote style.
+ */
+function hasIconLinkTag(html: string): boolean {
+  const linkPattern = /<link\b[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = linkPattern.exec(html)) !== null) {
+    const relValue = /\brel=["']([^"']*)["']/i.exec(match[0])?.[1] ?? "";
+    if (/icon/i.test(relValue)) return true;
+  }
+  return false;
+}
+
+/**
+ * Every schema.org @type declared on the page via JSON-LD (<script
+ * type="application/ld+json">, including @graph and nested/array values) or
+ * microdata (itemtype="...schema.org/<Type>"), normalised to its last path
+ * segment (e.g. "https://schema.org/LocalBusiness" -> "LocalBusiness").
+ */
+function extractSchemaTypes(html: string): string[] {
+  const types = new Set<string>();
+
+  const scriptPattern =
+    /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let scriptMatch: RegExpExecArray | null;
+  while ((scriptMatch = scriptPattern.exec(html)) !== null) {
+    const raw = scriptMatch[1] ?? "";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    collectJsonLdTypes(parsed, types);
+  }
+
+  const microdataPattern = /\bitemtype=["']([^"']+)["']/gi;
+  let microdataMatch: RegExpExecArray | null;
+  while ((microdataMatch = microdataPattern.exec(html)) !== null) {
+    const itemtype = microdataMatch[1] ?? "";
+    if (itemtype && /schema\.org/i.test(itemtype)) {
+      types.add(normalizeSchemaType(itemtype));
+    }
+  }
+
+  return unique([...types]).sort();
+}
+
+function collectJsonLdTypes(node: unknown, types: Set<string>): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectJsonLdTypes(item, types);
+    return;
+  }
+  if (!node || typeof node !== "object") return;
+
+  const record = node as Record<string, unknown>;
+  const typeValue = record["@type"];
+  if (typeof typeValue === "string") {
+    types.add(normalizeSchemaType(typeValue));
+  } else if (Array.isArray(typeValue)) {
+    for (const value of typeValue) {
+      if (typeof value === "string") types.add(normalizeSchemaType(value));
+    }
+  }
+
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "@type") continue;
+    if (value && typeof value === "object") {
+      collectJsonLdTypes(value, types);
+    }
+  }
+}
+
+function normalizeSchemaType(type: string): string {
+  const trimmed = type.trim();
+  const segments = trimmed.split(/[/:]/).filter(Boolean);
+  return segments.length > 0 ? (segments[segments.length - 1] ?? trimmed) : trimmed;
+}
+
+/**
+ * schema.org/LocalBusiness "More specific Types" plus the direct subtypes of
+ * each of those (and the direct subtypes of Store, MedicalBusiness,
+ * HomeAndConstructionBusiness, LegalService, FinancialService,
+ * AutomotiveBusiness, FoodEstablishment, HealthAndBeautyBusiness,
+ * LodgingBusiness, EntertainmentBusiness, GovernmentOffice and
+ * SportsActivityLocation), sourced from https://schema.org/LocalBusiness and
+ * each linked subtype page on 2026-09-21. Organization/Corporation added per
+ * H01 (non-LocalBusiness business-entity schema that still identifies a
+ * real business). Do not add types not confirmed on schema.org.
+ */
+export const BUSINESS_SCHEMA_TYPES = new Set<string>([
+  // Generic business-entity types (not LocalBusiness subtypes, but still
+  // machine-readable business identification).
+  "LocalBusiness",
+  "Organization",
+  "Corporation",
+  "ProfessionalService",
+  // Direct subtypes of LocalBusiness.
+  "AnimalShelter",
+  "ArchiveOrganization",
+  "AutomotiveBusiness",
+  "ChildCare",
+  "Dentist",
+  "DryCleaningOrLaundry",
+  "EmergencyService",
+  "EmploymentAgency",
+  "EntertainmentBusiness",
+  "FinancialService",
+  "FoodEstablishment",
+  "GovernmentOffice",
+  "HealthAndBeautyBusiness",
+  "HomeAndConstructionBusiness",
+  "InternetCafe",
+  "LegalService",
+  "Library",
+  "LodgingBusiness",
+  "MedicalBusiness",
+  "RadioStation",
+  "RealEstateAgent",
+  "RecyclingCenter",
+  "SelfStorage",
+  "ShoppingCenter",
+  "SportsActivityLocation",
+  "Store",
+  "TelevisionStation",
+  "TouristInformationCenter",
+  "TravelAgency",
+  // AutomotiveBusiness subtypes.
+  "AutoBodyShop",
+  "AutoDealer",
+  "AutoPartsStore",
+  "AutoRental",
+  "AutoRepair",
+  "AutoWash",
+  "GasStation",
+  "MotorcycleDealer",
+  "MotorcycleRepair",
+  // FinancialService subtypes.
+  "AccountingService",
+  "AutomatedTeller",
+  "BankOrCreditUnion",
+  "InsuranceAgency",
+  // FoodEstablishment subtypes.
+  "Bakery",
+  "BarOrPub",
+  "Brewery",
+  "CafeOrCoffeeShop",
+  "Distillery",
+  "FastFoodRestaurant",
+  "IceCreamShop",
+  "Restaurant",
+  "Winery",
+  // HealthAndBeautyBusiness subtypes.
+  "BeautySalon",
+  "DaySpa",
+  "HairSalon",
+  "HealthClub",
+  "NailSalon",
+  "TattooParlor",
+  // HomeAndConstructionBusiness subtypes.
+  "Electrician",
+  "GeneralContractor",
+  "HVACBusiness",
+  "HousePainter",
+  "Locksmith",
+  "MovingCompany",
+  "Plumber",
+  "RoofingContractor",
+  // LegalService subtypes.
+  "Attorney",
+  "Notary",
+  // LodgingBusiness subtypes.
+  "BedAndBreakfast",
+  "Campground",
+  "Hostel",
+  "Hotel",
+  "Motel",
+  "Resort",
+  "VacationRental",
+  // MedicalBusiness subtypes.
+  "Audiology",
+  "CommunityHealth",
+  "Dermatology",
+  "DietNutrition",
+  "Emergency",
+  "Geriatric",
+  "Gynecologic",
+  "MedicalClinic",
+  "Midwifery",
+  "Nursing",
+  "Obstetric",
+  "Oncologic",
+  "Ophthalmology",
+  "Optician",
+  "Optometric",
+  "Otolaryngologic",
+  "Pediatric",
+  "Pharmacy",
+  "Physician",
+  "Physiotherapy",
+  "PlasticSurgery",
+  "Podiatric",
+  "PrimaryCare",
+  "Psychiatric",
+  "PublicHealth",
+  // Store subtypes.
+  "BikeStore",
+  "BookStore",
+  "ClothingStore",
+  "ComputerStore",
+  "ConvenienceStore",
+  "DepartmentStore",
+  "ElectronicsStore",
+  "Florist",
+  "FurnitureStore",
+  "GardenStore",
+  "GroceryStore",
+  "HardwareStore",
+  "HobbyShop",
+  "HomeGoodsStore",
+  "JewelryStore",
+  "LiquorStore",
+  "MensClothingStore",
+  "MobilePhoneStore",
+  "MovieRentalStore",
+  "MusicStore",
+  "OfficeEquipmentStore",
+  "OutletStore",
+  "PawnShop",
+  "PetStore",
+  "ShoeStore",
+  "SportingGoodsStore",
+  "TireShop",
+  "ToyStore",
+  "WholesaleStore",
+  // EntertainmentBusiness subtypes.
+  "AdultEntertainment",
+  "AmusementPark",
+  "ArtGallery",
+  "Casino",
+  "ComedyClub",
+  "MovieTheater",
+  "NightClub",
+  // GovernmentOffice subtypes.
+  "PostOffice",
+  // SportsActivityLocation subtypes.
+  "BowlingAlley",
+  "ExerciseGym",
+  "GolfCourse",
+  "PublicSwimmingPool",
+  "SkiResort",
+  "SportsClub",
+  "StadiumOrArena",
+  "TennisComplex"
+]);
 
 function collectAttributes(html: string, tagName: string, attribute: string): string[] {
   const values: string[] = [];
@@ -1872,6 +2186,37 @@ async function sitemapExists(
         requestTimeoutMs: options.requestTimeoutMs ?? crawlerPolicy.requestTimeoutMs
       }
     );
+    return fetched.response.status < 400;
+  } catch {
+    return false;
+  }
+}
+
+async function faviconExists(
+  startedUrl: URL,
+  fetchAdapter: FetchAdapter,
+  options: { requestTimeoutMs?: number } = {}
+): Promise<boolean> {
+  try {
+    const fetched = await safeFetch(
+      fetchAdapter,
+      new URL("/favicon.ico", startedUrl.origin).href,
+      {
+        method: "HEAD",
+        requestTimeoutMs: options.requestTimeoutMs ?? crawlerPolicy.requestTimeoutMs
+      }
+    );
+    if (fetched.response.status === 405) {
+      const retried = await safeFetch(
+        fetchAdapter,
+        new URL("/favicon.ico", startedUrl.origin).href,
+        {
+          method: "GET",
+          requestTimeoutMs: options.requestTimeoutMs ?? crawlerPolicy.requestTimeoutMs
+        }
+      );
+      return retried.response.status < 400;
+    }
     return fetched.response.status < 400;
   } catch {
     return false;
