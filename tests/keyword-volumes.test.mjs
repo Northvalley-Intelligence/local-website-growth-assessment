@@ -396,7 +396,8 @@ describe("renderMarkdown", () => {
 
     expect(md).toBe(
       [
-        "# Demand data — garlandservices.net (Keyword Planner, pulled 2026-09-07)",
+        "# Demand data — garlandservices.net (Google Ads historical search estimates — approximate, close variants included; pulled 2026-09-07)",
+        "Volumes are Google Keyword Planner historical estimates for the selected geography; overlapping terms must not be added together.",
         "",
         "## Lane A — National baseline (geo: United States)",
         "Caveat: national volumes describe category shape, not local demand.",
