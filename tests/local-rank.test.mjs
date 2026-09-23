@@ -58,7 +58,8 @@ function makePlace({
   hours,
   photos,
   description,
-  location
+  location,
+  sab
 } = {}) {
   const p = {};
   if (id !== undefined) p.id = id;
@@ -76,6 +77,7 @@ function makePlace({
   }
   if (description) p.editorialSummary = { text: description };
   if (location) p.location = location;
+  if (sab !== undefined) p.pureServiceAreaBusiness = sab;
   return p;
 }
 
@@ -147,7 +149,7 @@ describe("haversineMiles", () => {
 });
 
 describe("searchTextBody", () => {
-  it("builds the documented request contract", () => {
+  it("builds the documented request contract, includePureServiceAreaBusinesses ON by default", () => {
     const body = searchTextBody("realtor near me", { latitude: 1, longitude: 2 }, 15);
     expect(body).toEqual({
       textQuery: "realtor near me",
@@ -155,8 +157,14 @@ describe("searchTextBody", () => {
         circle: { center: { latitude: 1, longitude: 2 }, radius: 15000 }
       },
       pageSize: 20,
-      rankPreference: "RELEVANCE"
+      rankPreference: "RELEVANCE",
+      includePureServiceAreaBusinesses: true
     });
+  });
+
+  it("turns includePureServiceAreaBusinesses off when includeSab=false (--no-sab)", () => {
+    const body = searchTextBody("realtor near me", { latitude: 1, longitude: 2 }, 15, false);
+    expect(body.includePureServiceAreaBusinesses).toBe(false);
   });
 });
 
@@ -167,15 +175,23 @@ describe("pagesForDepth / nextPageBody", () => {
     expect(pagesForDepth(60)).toBe(3);
   });
 
-  it("repeats the initial search's parameters and adds pageToken (Google requires an exact match)", () => {
+  it("repeats the initial search's parameters (including includeSab) and adds pageToken (Google requires an exact match)", () => {
     const center = { latitude: 1, longitude: 2 };
     expect(nextPageBody("realtor near me", center, 15, "TOKEN123")).toEqual({
       textQuery: "realtor near me",
       locationBias: { circle: { center, radius: 15000 } },
       pageSize: 20,
       rankPreference: "RELEVANCE",
+      includePureServiceAreaBusinesses: true,
       pageToken: "TOKEN123"
     });
+  });
+
+  it("threads includeSab=false through to the paging body too", () => {
+    const center = { latitude: 1, longitude: 2 };
+    expect(
+      nextPageBody("realtor near me", center, 15, "TOKEN123", false).includePureServiceAreaBusinesses
+    ).toBe(false);
   });
 });
 
@@ -306,6 +322,44 @@ describe("fetchSearchPages (paginated merge, no real network/timers)", () => {
     expect(fetchPage).toHaveBeenCalledTimes(3); // page 1, page 2 attempt 1 (empty), page 2 retry (empty, terminal)
   });
 
+  it("pagination guard: stops after 2 consecutive empty pages even though a nextPageToken keeps being offered", async () => {
+    const fetchPage = vi.fn(async (body) => {
+      if (!body.pageToken) return { places: [], nextPageToken: "tok-2" }; // page 1: empty
+      return { places: [], nextPageToken: "tok-3" }; // page 2 (and its retry): still empty
+    });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const results = await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 60,
+      fetchPage,
+      sleep
+    });
+    expect(results).toHaveLength(0);
+    // page 1 (empty, no retry - no pageToken yet) + page 2 attempt + page 2 retry = 3 calls,
+    // never a 3rd page slot despite tok-3 still being offered.
+    expect(fetchPage).toHaveBeenCalledTimes(3);
+  });
+
+  it("threads includeSab through to every page's request body", async () => {
+    const bodies = [];
+    const fetchPage = vi.fn(async (body) => {
+      bodies.push(body.includePureServiceAreaBusinesses);
+      if (!body.pageToken) return { places: makePage(1), nextPageToken: "tok-2" };
+      return { places: makePage(2), nextPageToken: null };
+    });
+    await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 60,
+      fetchPage,
+      includeSab: false
+    });
+    expect(bodies).toEqual([false, false]);
+  });
+
   it("not found beyond a full 60-result search: NOT_IN_TOP_60 with searched: 60", async () => {
     const fetchPage = vi.fn(async (body) => {
       if (!body.pageToken) return { places: makePage(1), nextPageToken: "tok-2" };
@@ -402,7 +456,8 @@ describe("extractPlaceData", () => {
       photoCapped: false,
       primaryCategory: "Real estate agency",
       hasHours: false,
-      hasWebsite: true
+      hasWebsite: true,
+      pureServiceAreaBusiness: null
     });
   });
 
@@ -414,10 +469,20 @@ describe("extractPlaceData", () => {
     expect(data.primaryCategory).toBeNull();
     expect(data.hasHours).toBe(false);
     expect(data.hasWebsite).toBe(false);
+    expect(data.pureServiceAreaBusiness).toBeNull();
 
     const capped = extractPlaceData(makePlace({ name: "Popular", photos: 10 }));
     expect(capped.photoCount).toBe(10);
     expect(capped.photoCapped).toBe(true);
+  });
+
+  it("extracts pureServiceAreaBusiness true/false when the API states it (never fabricated when absent)", () => {
+    expect(extractPlaceData(makePlace({ name: "SAB Co", sab: true })).pureServiceAreaBusiness).toBe(
+      true
+    );
+    expect(
+      extractPlaceData(makePlace({ name: "Storefront Co", sab: false })).pureServiceAreaBusiness
+    ).toBe(false);
   });
 });
 
@@ -441,7 +506,7 @@ describe("needsDetails", () => {
 });
 
 describe("formatRow", () => {
-  it("formats a full row", () => {
+  it("formats a full row, SAB '—' when the API didn't state it", () => {
     const data = extractPlaceData(
       makePlace({
         name: "Top Realty",
@@ -461,13 +526,22 @@ describe("formatRow", () => {
       "10+",
       "Real estate agency",
       "yes",
-      "yes"
+      "yes",
+      NA
     ]);
+  });
+
+  it("renders the SAB column yes/no when the API states pureServiceAreaBusiness", () => {
+    const sabData = extractPlaceData(makePlace({ name: "Hidden Co", sab: true }));
+    expect(formatRow("4", sabData)[8]).toBe("yes");
+    const addrData = extractPlaceData(makePlace({ name: "Storefront Co", sab: false }));
+    expect(formatRow("1", addrData)[8]).toBe("no");
   });
 
   it("fills every missing cell with the em dash, never a guess", () => {
     expect(formatRow(NOT_IN_TOP_60, null)).toEqual([
       NOT_IN_TOP_60,
+      NA,
       NA,
       NA,
       NA,
@@ -501,13 +575,20 @@ describe("formatCompetitorRow", () => {
       "10+",
       "Real estate agency",
       "yes",
-      "yes"
+      "yes",
+      NA
     ]);
+  });
+
+  it("carries pureServiceAreaBusiness through to the SAB cell", () => {
+    const data = extractCompetitorData(makePlace({ name: "Hidden Co", sab: true }), null);
+    expect(formatCompetitorRow("1", data)[8]).toBe("yes");
   });
 
   it("fills every cell with the em dash when data is null (e.g. NOT SHOWING)", () => {
     expect(formatCompetitorRow(NOT_SHOWING_LABEL, null)).toEqual([
       NOT_SHOWING_LABEL,
+      NA,
       NA,
       NA,
       NA,
@@ -545,7 +626,8 @@ describe("extractCompetitorData", () => {
       hoursListed: true,
       website: "top.com",
       hasDescription: true,
-      servicesCount: null
+      servicesCount: null,
+      pureServiceAreaBusiness: null
     });
     expect(data.distanceMi).toBeGreaterThan(0);
   });
@@ -559,6 +641,15 @@ describe("extractCompetitorData", () => {
     expect(data.hasDescription).toBe(false);
     expect(data.distanceMi).toBeNull();
     expect(data.website).toBeNull();
+  });
+
+  it("carries pureServiceAreaBusiness true/false when the API states it", () => {
+    expect(extractCompetitorData(makePlace({ name: "Hidden Co", sab: true }), null)).toMatchObject({
+      pureServiceAreaBusiness: true
+    });
+    expect(extractCompetitorData(makePlace({ name: "Storefront Co", sab: false }), null)).toMatchObject({
+      pureServiceAreaBusiness: false
+    });
   });
 });
 
@@ -690,7 +781,8 @@ describe("buildClientRow", () => {
       photoCount: 4,
       primaryCategory: "Consultant",
       hoursListed: false,
-      website: "biz.com"
+      website: "biz.com",
+      pureServiceAreaBusiness: null
     });
   });
 
@@ -705,6 +797,7 @@ describe("buildClientRow", () => {
       hoursListed: true,
       website: "https://www.northvalleyintel.com",
       placeId: "p1",
+      pureServiceAreaBusiness: true,
       hasDescription: true,
       distanceMi: 2.4
     };
@@ -720,10 +813,29 @@ describe("buildClientRow", () => {
       primaryCategory: "Consultant",
       hoursListed: true,
       website: "northvalleyintel.com",
+      pureServiceAreaBusiness: true,
       hasDescription: true,
       servicesCount: null,
       distanceMi: 2.4
     });
+  });
+
+  it("own profile found but pureServiceAreaBusiness absent from it: null, never fabricated", () => {
+    const ownProfile = {
+      found: true,
+      name: "Biz",
+      rating: null,
+      reviewCount: null,
+      photoCount: null,
+      primaryCategory: null,
+      hoursListed: false,
+      website: null,
+      placeId: null,
+      hasDescription: false,
+      distanceMi: null
+    };
+    const row = buildClientRow({ place: null, rank: null, ownProfile, center });
+    expect(row.pureServiceAreaBusiness).toBeNull();
   });
 
   it("neither ranked nor own profile found: every attribute null, status 'not showing'", () => {
@@ -739,6 +851,7 @@ describe("buildClientRow", () => {
       primaryCategory: null,
       hoursListed: null,
       website: null,
+      pureServiceAreaBusiness: null,
       hasDescription: null,
       servicesCount: null,
       distanceMi: null
@@ -1076,16 +1189,26 @@ describe("buildTermOutput (full fixture, no network)", () => {
     expect(out.client.position).toBe(7);
     expect(out.client.name).toBe("Felton & Peel");
     expect(out.section).toContain(
-      "| 1 | Top Realty | 4.9 | 212 | 10+ | Real estate agency | yes | yes |"
+      `| 1 | Top Realty | 4.9 | 212 | 10+ | Real estate agency | yes | yes | ${NA} |`
     );
     expect(out.section).toContain(
-      "| **7** | **Felton & Peel** | **4.6** | **19** | **4** | **Real estate agency** | **no** | **yes** |"
+      `| **7** | **Felton & Peel** | **4.6** | **19** | **4** | **Real estate agency** | **no** | **yes** | **${NA}** |`
     );
-    // No em-dash table cells: every field was supplied for every row involved.
+    // The SAB column IS the em dash for every row here (fixture never states the field) -
+    // exclude that last cell before asserting no OTHER field was left unfilled.
     const dataRows = out.section
       .split("\n")
       .filter((l) => l.startsWith("| ") && !l.startsWith("| Rank"));
-    expect(dataRows.every((row) => !row.includes(` ${NA} `))).toBe(true);
+    const cellsExceptSab = dataRows.map((row) =>
+      row
+        .split("|")
+        .map((c) => c.trim())
+        .filter((c) => c.length)
+        .slice(0, -1)
+    );
+    expect(cellsExceptSab.every((cells) => !cells.some((c) => c === NA || c === `**${NA}**`))).toBe(
+      true
+    );
   });
 
   it("fires reviews/photos/hours suggestions for this fixture, stays silent on category/website", () => {
@@ -1172,7 +1295,8 @@ describe("parseArgs", () => {
       radiusKm: 15,
       top: 5,
       depth: 60,
-      dryRun: false
+      dryRun: false,
+      sab: true
     });
   });
 
@@ -1207,6 +1331,12 @@ describe("parseArgs", () => {
     expect(opts.depth).toBe(40);
     expect(opts.name).toBe("Business Name");
     expect(opts.dryRun).toBe(true);
+  });
+
+  it("--no-sab turns off the SAB default", () => {
+    const base = ["--domain", "d", "--terms", "t", "--place", "p", "--out", "o.md"];
+    expect(parseArgs(base).sab).toBe(true);
+    expect(parseArgs([...base, "--no-sab"]).sab).toBe(false);
   });
 
   it("requires --domain, --terms, --place, --out", () => {
@@ -1282,6 +1412,7 @@ describe("field masks", () => {
       "places.businessStatus",
       "places.googleMapsUri",
       "places.editorialSummary",
+      "places.pureServiceAreaBusiness",
       "places.location"
     ]) {
       expect(SEARCH_FIELD_MASK.split(",")).toContain(field);
@@ -1318,11 +1449,19 @@ describe("domainLabel / resolveBusinessName", () => {
 });
 
 describe("ownProfileSearchBody", () => {
-  it("builds a plain textQuery, no locationBias", () => {
+  it("builds a plain textQuery, no locationBias, includePureServiceAreaBusinesses ON by default", () => {
     expect(ownProfileSearchBody("Northvalley Intelligence", "Marietta, GA")).toEqual({
       textQuery: "Northvalley Intelligence Marietta, GA",
-      pageSize: 5
+      pageSize: 5,
+      includePureServiceAreaBusinesses: true
     });
+  });
+
+  it("turns includePureServiceAreaBusinesses off when includeSab=false", () => {
+    expect(
+      ownProfileSearchBody("Northvalley Intelligence", "Marietta, GA", false)
+        .includePureServiceAreaBusinesses
+    ).toBe(false);
   });
 });
 
@@ -1378,6 +1517,7 @@ describe("extractOwnProfile", () => {
       hoursListed: true,
       website: "https://northvalleyintel.com",
       placeId: "p1",
+      pureServiceAreaBusiness: null,
       hasDescription: true
     });
     expect(profile.distanceMi).toBeGreaterThan(0);
@@ -1396,6 +1536,13 @@ describe("extractOwnProfile", () => {
     const profile = extractOwnProfile(place, null);
     expect(profile.hasDescription).toBe(false);
     expect(profile.distanceMi).toBeNull();
+  });
+
+  it("extracts pureServiceAreaBusiness true/false when the API states it on the own-profile place", () => {
+    const sabPlace = makePlace({ id: "p2", name: "Hidden Co", sab: true });
+    expect(extractOwnProfile(sabPlace, null).pureServiceAreaBusiness).toBe(true);
+    const storefrontPlace = makePlace({ id: "p3", name: "Storefront Co", sab: false });
+    expect(extractOwnProfile(storefrontPlace, null).pureServiceAreaBusiness).toBe(false);
   });
 });
 
