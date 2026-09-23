@@ -83,15 +83,16 @@ export const PLACE_FIELDS = [
   "photos",
   "businessStatus",
   "googleMapsUri",
-  "editorialSummary"
+  "editorialSummary",
+  "pureServiceAreaBusiness"
 ];
 
 export const SEARCH_FIELD_MASK = PLACE_FIELDS.map((f) => `places.${f}`).join(",");
 export const DETAILS_FIELD_MASK = PLACE_FIELDS.join(",");
 
 const TABLE_HEADER =
-  "| Rank | Business | Rating | Reviews | Photos | Primary category | Hours listed | Website |";
-const TABLE_SEP = "|---|---|---|---|---|---|---|---|";
+  "| Rank | Business | Rating | Reviews | Photos | Primary category | Hours listed | Website | SAB |";
+const TABLE_SEP = "|---|---|---|---|---|---|---|---|---|";
 
 // --------------------------------------------------------------------------
 // Small helpers
@@ -194,8 +195,15 @@ export function kmToMeters(km) {
   return Math.round(toNumber(km) * 1000);
 }
 
-/** The Places API searchText request body for one term, from a resolved centre. */
-export function searchTextBody(term, center, radiusKm) {
+/**
+ * The Places API searchText request body for one term, from a resolved centre.
+ * `includeSab` (default true) sets includePureServiceAreaBusinesses - Northvalley
+ * and many local-service competitors are hidden-address pure service-area
+ * businesses that Google's Text Search silently excludes when this is false
+ * or omitted (Experiment A, 2026-09-22: branch A2). `--no-sab` on the CLI
+ * turns it off, for an A/B re-run only.
+ */
+export function searchTextBody(term, center, radiusKm, includeSab = true) {
   return {
     textQuery: term,
     locationBias: {
@@ -205,7 +213,8 @@ export function searchTextBody(term, center, radiusKm) {
       }
     },
     pageSize: SEARCH_PAGE_SIZE,
-    rankPreference: "RELEVANCE"
+    rankPreference: "RELEVANCE",
+    includePureServiceAreaBusinesses: includeSab
   };
 }
 
@@ -214,10 +223,11 @@ export function searchTextBody(term, center, radiusKm) {
  * search. Google requires a paging request's other parameters to match the
  * initial request exactly ("Request parameters for paging requests must
  * match the initial SearchText request") - so this repeats searchTextBody's
- * fields and adds pageToken, rather than sending pageToken alone.
+ * fields (including includeSab) and adds pageToken, rather than sending
+ * pageToken alone.
  */
-export function nextPageBody(term, center, radiusKm, pageToken) {
-  return { ...searchTextBody(term, center, radiusKm), pageToken };
+export function nextPageBody(term, center, radiusKm, pageToken, includeSab = true) {
+  return { ...searchTextBody(term, center, radiusKm, includeSab), pageToken };
 }
 
 /** How many pages of SEARCH_PAGE_SIZE this depth needs, capped at MAX_PAGES (60/20 = 3). */
@@ -234,23 +244,40 @@ const defaultSleep = (ms) => new Promise((resolve) => globalThis.setTimeout(reso
  * timers; `sleep` is injected the same way. When a page fetched with a
  * pageToken comes back with no places (the token was not valid yet), retry
  * that SAME page once after `PAGE_TOKEN_DELAY_MS` - never more than once.
+ * `includeSab` (default true) is threaded into every request body.
+ *
+ * Pagination guard: stops after `MAX_PAGES` (3, i.e. 60 results) regardless,
+ * OR after 2 consecutive pages come back with zero places even once a
+ * nextPageToken kept being offered - a live run on 2026-09-22 looped on
+ * empty next-page tokens before this guard existed.
  */
-export async function fetchSearchPages({ term, center, radiusKm, depth, fetchPage, sleep = defaultSleep }) {
+export async function fetchSearchPages({
+  term,
+  center,
+  radiusKm,
+  depth,
+  fetchPage,
+  sleep = defaultSleep,
+  includeSab = true
+}) {
   const maxPages = pagesForDepth(depth);
   let allPlaces = [];
   let pageToken = null;
+  let consecutiveEmptyPages = 0;
   for (let page = 0; page < maxPages; page += 1) {
     const body = pageToken
-      ? nextPageBody(term, center, radiusKm, pageToken)
-      : searchTextBody(term, center, radiusKm);
+      ? nextPageBody(term, center, radiusKm, pageToken, includeSab)
+      : searchTextBody(term, center, radiusKm, includeSab);
     let result = await fetchPage(body);
     if (pageToken && (!result.places || result.places.length === 0)) {
       await sleep(PAGE_TOKEN_DELAY_MS);
       result = await fetchPage(body);
     }
-    allPlaces = allPlaces.concat(result.places || []);
+    const places = result.places || [];
+    allPlaces = allPlaces.concat(places);
     pageToken = result.nextPageToken || null;
-    if (!pageToken || allPlaces.length >= depth) break;
+    consecutiveEmptyPages = places.length === 0 ? consecutiveEmptyPages + 1 : 0;
+    if (!pageToken || allPlaces.length >= depth || consecutiveEmptyPages >= 2) break;
   }
   return allPlaces.slice(0, depth);
 }
@@ -367,11 +394,16 @@ export function resolveBusinessName(name, domain) {
   return trimmed || domainLabel(domain);
 }
 
-/** The Places API searchText request body for the dedicated own-profile lookup. */
-export function ownProfileSearchBody(name, place) {
+/**
+ * The Places API searchText request body for the dedicated own-profile lookup.
+ * Carries the same `includeSab` (default true) as the main search body so a
+ * hidden-address pure-SAB own profile (Northvalley's own shape) is findable.
+ */
+export function ownProfileSearchBody(name, place, includeSab = true) {
   return {
     textQuery: `${name} ${place}`,
-    pageSize: OWN_PROFILE_PAGE_SIZE
+    pageSize: OWN_PROFILE_PAGE_SIZE,
+    includePureServiceAreaBusinesses: includeSab
   };
 }
 
@@ -398,7 +430,11 @@ export function extractPlaceData(place) {
     hasHours: Boolean(place.regularOpeningHours),
     hasWebsite: Boolean(place.websiteUri),
     websiteUri: place.websiteUri ?? null,
-    placeId: place.id ?? null
+    placeId: place.id ?? null,
+    // Absent from the API response means "unknown", never "no" - Google only
+    // documents this field's presence, not a guaranteed false when omitted.
+    pureServiceAreaBusiness:
+      typeof place.pureServiceAreaBusiness === "boolean" ? place.pureServiceAreaBusiness : null
   };
 }
 
@@ -418,7 +454,8 @@ export function extractOwnProfile(place) {
     primaryCategory: data.primaryCategory,
     hoursListed: data.hasHours,
     website: data.websiteUri,
-    placeId: data.placeId
+    placeId: data.placeId,
+    pureServiceAreaBusiness: data.pureServiceAreaBusiness
   };
 }
 
@@ -458,9 +495,14 @@ function formatCount(count, capped) {
   return capped ? "10+" : String(count);
 }
 
-/** One markdown table row (array of 8 cells) for a rank label + extracted place data. */
+function formatSab(value) {
+  if (value === null || value === undefined) return NA;
+  return value ? "yes" : "no";
+}
+
+/** One markdown table row (array of 9 cells) for a rank label + extracted place data. */
 export function formatRow(rankLabel, data) {
-  if (!data) return [rankLabel, NA, NA, NA, NA, NA, NA, NA];
+  if (!data) return [rankLabel, NA, NA, NA, NA, NA, NA, NA, NA];
   return [
     rankLabel,
     data.name ?? NA,
@@ -469,7 +511,8 @@ export function formatRow(rankLabel, data) {
     formatCount(data.photoCount, data.photoCapped),
     data.primaryCategory ?? NA,
     data.hasHours ? "yes" : "no",
-    data.hasWebsite ? "yes" : "no"
+    data.hasWebsite ? "yes" : "no",
+    formatSab(data.pureServiceAreaBusiness)
   ];
 }
 
@@ -675,7 +718,11 @@ const USAGE = [
   '  node scripts/local-rank.mjs --domain <domain> --terms "<term>;<term>" \\',
   '    --place "<City, GA | zip>" --out <path.md> \\',
   "    [--json <path>] [--env <path>] [--name <business name>] \\",
-  "    [--radius-km 15] [--top 3] [--depth 20|40|60] [--dry-run]",
+  "    [--radius-km 15] [--top 3] [--depth 20|40|60] [--dry-run] [--no-sab]",
+  "",
+  "--no-sab turns OFF includePureServiceAreaBusinesses (default ON) - for an A/B",
+  "re-run only; a hidden-address pure service-area business is excluded from",
+  "results when this is off (Experiment A, 2026-09-22).",
   "",
   "Env keys (from --env, default .env.local in CWD; process env is a fallback):",
   ...REQUIRED_ENV_KEYS.map((k) => `  ${k} (required)`),
@@ -694,7 +741,8 @@ export function parseArgs(argv) {
     radiusKm: DEFAULT_RADIUS_KM,
     top: DEFAULT_TOP,
     depth: DEFAULT_DEPTH,
-    dryRun: false
+    dryRun: false,
+    sab: true
   };
   const flags = {
     "--domain": "domain",
@@ -714,6 +762,10 @@ export function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--dry-run") {
       opts.dryRun = true;
+      continue;
+    }
+    if (arg === "--no-sab") {
+      opts.sab = false;
       continue;
     }
     if (arg === "--help" || arg === "-h") {
@@ -778,6 +830,7 @@ function printDryRun(opts, terms, envState) {
     `Radius:  ${opts.radiusKm} km`,
     `Top N:   ${opts.top}`,
     `Depth:   ${opts.depth} (${pagesForDepth(opts.depth)} page(s) of ${SEARCH_PAGE_SIZE})`,
+    `SAB:     includePureServiceAreaBusinesses = ${opts.sab} ${opts.sab ? "(default)" : "(--no-sab)"}`,
     `Env file:   ${opts.env}${envState.envFileFound ? "" : " (not found; process env only)"}`,
     `Env keys present (values NEVER shown): ${REQUIRED_ENV_KEYS.join(", ")}`,
     `Output:     ${opts.out}`,
@@ -794,7 +847,7 @@ function printDryRun(opts, terms, envState) {
   ];
   for (const term of terms) {
     lines.push(
-      `   body: ${JSON.stringify(searchTextBody(term, "<resolved from step 1>", opts.radiusKm))}`
+      `   body: ${JSON.stringify(searchTextBody(term, "<resolved from step 1>", opts.radiusKm, opts.sab))}`
     );
   }
   lines.push(
@@ -806,7 +859,7 @@ function printDryRun(opts, terms, envState) {
       " (never when it already ranks):",
     `   POST ${PLACES_HOST}/places:searchText`,
     `   headers: X-Goog-Api-Key: <REDACTED>, X-Goog-FieldMask: ${SEARCH_FIELD_MASK}`,
-    `   body: ${JSON.stringify(ownProfileSearchBody(resolveBusinessName(opts.name, opts.domain), opts.place))}`,
+    `   body: ${JSON.stringify(ownProfileSearchBody(resolveBusinessName(opts.name, opts.domain), opts.place, opts.sab))}`,
     ""
   );
   process.stdout.write(lines.join("\n"));
@@ -866,12 +919,13 @@ async function searchTextPage(body, apiKey) {
   return { places: (res.json && res.json.places) || [], nextPageToken: res.json && res.json.nextPageToken };
 }
 
-async function searchText(term, center, radiusKm, apiKey, depth) {
+async function searchText(term, center, radiusKm, apiKey, depth, includeSab = true) {
   return fetchSearchPages({
     term,
     center,
     radiusKm,
     depth,
+    includeSab,
     fetchPage: (body) => searchTextPage(body, apiKey)
   });
 }
@@ -892,11 +946,15 @@ async function completeResult(place, apiKey) {
   return { ...details, ...place };
 }
 
-async function searchOwnProfileText(name, place, apiKey) {
-  const res = await postJson(`${PLACES_HOST}/places:searchText`, ownProfileSearchBody(name, place), {
-    "X-Goog-Api-Key": apiKey,
-    "X-Goog-FieldMask": SEARCH_FIELD_MASK
-  });
+async function searchOwnProfileText(name, place, apiKey, includeSab = true) {
+  const res = await postJson(
+    `${PLACES_HOST}/places:searchText`,
+    ownProfileSearchBody(name, place, includeSab),
+    {
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": SEARCH_FIELD_MASK
+    }
+  );
   if (!res.ok) fail(describeApiError(res.status, res.json), 2);
   return (res.json && res.json.places) || [];
 }
@@ -905,13 +963,15 @@ async function searchOwnProfileText(name, place, apiKey) {
  * ONE extra Places Text Search to find the business's own profile directly,
  * used only for a term whose searched depth does not contain the business.
  * Never fabricates a match: null when the dedicated search finds nothing.
+ * Uses the same includeSab body as the main search (a hidden-address pure
+ * service-area business's own profile needs it too).
  */
-async function lookupOwnProfile({ domain, name, place, apiKey }) {
+async function lookupOwnProfile({ domain, name, place, apiKey, includeSab = true }) {
   const resolvedName = resolveBusinessName(name, domain);
   process.stdout.write(
     `Own-profile lookup: "${resolvedName}" was not found - running one extra Places search for its own profile.\n`
   );
-  const rawResults = await searchOwnProfileText(resolvedName, place, apiKey);
+  const rawResults = await searchOwnProfileText(resolvedName, place, apiKey, includeSab);
   const idx = matchOwnProfile(rawResults, domain, name || resolvedName);
   if (idx === null) return null;
   const complete = await completeResult(rawResults[idx], apiKey);
@@ -970,7 +1030,7 @@ async function main() {
   const sections = [];
   const jsonTerms = [];
   for (const term of terms) {
-    const rawResults = await searchText(term, center, opts.radiusKm, apiKey, opts.depth);
+    const rawResults = await searchText(term, center, opts.radiusKm, apiKey, opts.depth, opts.sab);
     const idx = matchBusiness(rawResults, opts.domain, opts.name);
     const completeIndexes = new Set(rawResults.slice(0, opts.top).map((_, i) => i));
     if (idx !== null) completeIndexes.add(idx);
@@ -981,7 +1041,13 @@ async function main() {
     // One extra API call per unranked term only - never when the business already ranks.
     const ownProfile =
       idx === null
-        ? await lookupOwnProfile({ domain: opts.domain, name: opts.name, place: opts.place, apiKey })
+        ? await lookupOwnProfile({
+            domain: opts.domain,
+            name: opts.name,
+            place: opts.place,
+            apiKey,
+            includeSab: opts.sab
+          })
         : null;
 
     const { rank, searched, section, recommendations } = buildTermOutput({
@@ -994,7 +1060,16 @@ async function main() {
       ownProfile
     });
     sections.push(section);
-    jsonTerms.push({ term, rank, searched, results, recommendations, ownProfile });
+    // Every JSON row carries an explicit placeId (mirrors the raw `id` field
+    // Places returns) and pureServiceAreaBusiness (from the field mask) so a
+    // consumer never has to know the API's internal field name.
+    const jsonResults = results.map((r) => ({
+      ...r,
+      placeId: (r && r.id) ?? null,
+      pureServiceAreaBusiness:
+        r && typeof r.pureServiceAreaBusiness === "boolean" ? r.pureServiceAreaBusiness : null
+    }));
+    jsonTerms.push({ term, rank, searched, results: jsonResults, recommendations, ownProfile });
   }
 
   const markdown = renderMarkdown({ sections });

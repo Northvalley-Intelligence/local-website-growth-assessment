@@ -47,7 +47,8 @@ function makePlace({
   reviews,
   category,
   hours,
-  photos
+  photos,
+  sab
 } = {}) {
   const p = {};
   if (id !== undefined) p.id = id;
@@ -63,6 +64,7 @@ function makePlace({
   if (photos !== undefined) {
     p.photos = Array.from({ length: photos }, (_, i) => ({ name: `photo-${i}` }));
   }
+  if (sab !== undefined) p.pureServiceAreaBusiness = sab;
   return p;
 }
 
@@ -113,7 +115,7 @@ describe("kmToMeters", () => {
 });
 
 describe("searchTextBody", () => {
-  it("builds the documented request contract", () => {
+  it("builds the documented request contract, includePureServiceAreaBusinesses ON by default", () => {
     const body = searchTextBody("realtor near me", { latitude: 1, longitude: 2 }, 15);
     expect(body).toEqual({
       textQuery: "realtor near me",
@@ -121,8 +123,14 @@ describe("searchTextBody", () => {
         circle: { center: { latitude: 1, longitude: 2 }, radius: 15000 }
       },
       pageSize: 20,
-      rankPreference: "RELEVANCE"
+      rankPreference: "RELEVANCE",
+      includePureServiceAreaBusinesses: true
     });
+  });
+
+  it("turns includePureServiceAreaBusinesses off when includeSab=false (--no-sab)", () => {
+    const body = searchTextBody("realtor near me", { latitude: 1, longitude: 2 }, 15, false);
+    expect(body.includePureServiceAreaBusinesses).toBe(false);
   });
 });
 
@@ -133,15 +141,23 @@ describe("pagesForDepth / nextPageBody", () => {
     expect(pagesForDepth(60)).toBe(3);
   });
 
-  it("repeats the initial search's parameters and adds pageToken (Google requires an exact match)", () => {
+  it("repeats the initial search's parameters (including includeSab) and adds pageToken (Google requires an exact match)", () => {
     const center = { latitude: 1, longitude: 2 };
     expect(nextPageBody("realtor near me", center, 15, "TOKEN123")).toEqual({
       textQuery: "realtor near me",
       locationBias: { circle: { center, radius: 15000 } },
       pageSize: 20,
       rankPreference: "RELEVANCE",
+      includePureServiceAreaBusinesses: true,
       pageToken: "TOKEN123"
     });
+  });
+
+  it("threads includeSab=false through to the paging body too", () => {
+    const center = { latitude: 1, longitude: 2 };
+    expect(nextPageBody("realtor near me", center, 15, "TOKEN123", false).includePureServiceAreaBusinesses).toBe(
+      false
+    );
   });
 });
 
@@ -272,6 +288,26 @@ describe("fetchSearchPages (paginated merge, no real network/timers)", () => {
     expect(fetchPage).toHaveBeenCalledTimes(3); // page 1, page 2 attempt 1 (empty), page 2 retry (empty, terminal)
   });
 
+  it("pagination guard: stops after 2 consecutive empty pages even though a nextPageToken keeps being offered", async () => {
+    const fetchPage = vi.fn(async (body) => {
+      if (!body.pageToken) return { places: [], nextPageToken: "tok-2" }; // page 1: empty
+      return { places: [], nextPageToken: "tok-3" }; // page 2 (and its retry): still empty
+    });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const results = await fetchSearchPages({
+      term: "t",
+      center: { latitude: 1, longitude: 2 },
+      radiusKm: 15,
+      depth: 60,
+      fetchPage,
+      sleep
+    });
+    expect(results).toHaveLength(0);
+    // page 1 (empty, no retry - no pageToken yet) + page 2 attempt + page 2 retry = 3 calls,
+    // never a 3rd page slot despite tok-3 still being offered.
+    expect(fetchPage).toHaveBeenCalledTimes(3);
+  });
+
   it("not found beyond a full 60-result search: NOT_IN_TOP_60 with searched: 60", async () => {
     const fetchPage = vi.fn(async (body) => {
       if (!body.pageToken) return { places: makePage(1), nextPageToken: "tok-2" };
@@ -368,7 +404,8 @@ describe("extractPlaceData", () => {
       photoCapped: false,
       primaryCategory: "Real estate agency",
       hasHours: false,
-      hasWebsite: true
+      hasWebsite: true,
+      pureServiceAreaBusiness: null
     });
   });
 
@@ -380,10 +417,20 @@ describe("extractPlaceData", () => {
     expect(data.primaryCategory).toBeNull();
     expect(data.hasHours).toBe(false);
     expect(data.hasWebsite).toBe(false);
+    expect(data.pureServiceAreaBusiness).toBeNull();
 
     const capped = extractPlaceData(makePlace({ name: "Popular", photos: 10 }));
     expect(capped.photoCount).toBe(10);
     expect(capped.photoCapped).toBe(true);
+  });
+
+  it("extracts pureServiceAreaBusiness true/false when the API states it (never fabricated when absent)", () => {
+    expect(extractPlaceData(makePlace({ name: "SAB Co", sab: true })).pureServiceAreaBusiness).toBe(
+      true
+    );
+    expect(
+      extractPlaceData(makePlace({ name: "Storefront Co", sab: false })).pureServiceAreaBusiness
+    ).toBe(false);
   });
 });
 
@@ -407,7 +454,7 @@ describe("needsDetails", () => {
 });
 
 describe("formatRow", () => {
-  it("formats a full row", () => {
+  it("formats a full row, SAB '—' when the API didn't state it", () => {
     const data = extractPlaceData(
       makePlace({
         name: "Top Realty",
@@ -427,13 +474,22 @@ describe("formatRow", () => {
       "10+",
       "Real estate agency",
       "yes",
-      "yes"
+      "yes",
+      NA
     ]);
+  });
+
+  it("renders the SAB column yes/no when the API states pureServiceAreaBusiness", () => {
+    const sabData = extractPlaceData(makePlace({ name: "Hidden Co", sab: true }));
+    expect(formatRow("4", sabData)[8]).toBe("yes");
+    const addrData = extractPlaceData(makePlace({ name: "Storefront Co", sab: false }));
+    expect(formatRow("1", addrData)[8]).toBe("no");
   });
 
   it("fills every missing cell with the em dash, never a guess", () => {
     expect(formatRow(NOT_IN_TOP_60, null)).toEqual([
       NOT_IN_TOP_60,
+      NA,
       NA,
       NA,
       NA,
@@ -957,22 +1013,32 @@ describe("buildTermOutput (full fixture, no network)", () => {
     expect(out.rank).toBe(7);
     expect(out.searched).toBe(8);
     expect(out.section).toContain(
-      "| 1 | Top Realty | 4.9 | 212 | 10+ | Real estate agency | yes | yes |"
+      `| 1 | Top Realty | 4.9 | 212 | 10+ | Real estate agency | yes | yes | ${NA} |`
     );
     expect(out.section).toContain(
-      "| 2 | Second Realty | 4.8 | 150 | 10+ | Real estate agency | yes | yes |"
+      `| 2 | Second Realty | 4.8 | 150 | 10+ | Real estate agency | yes | yes | ${NA} |`
     );
     expect(out.section).toContain(
-      "| 3 | Third Realty | 4.7 | 100 | 8 | Real estate agency | yes | yes |"
+      `| 3 | Third Realty | 4.7 | 100 | 8 | Real estate agency | yes | yes | ${NA} |`
     );
     expect(out.section).toContain(
-      "| **7** | **Felton & Peel** | **4.6** | **19** | **4** | **Real estate agency** | **no** | **yes** |"
+      `| **7** | **Felton & Peel** | **4.6** | **19** | **4** | **Real estate agency** | **no** | **yes** | **${NA}** |`
     );
-    // No em-dash table cells: every field was supplied for every row involved.
+    // The SAB column IS the em dash for every row here (fixture never states the field) -
+    // exclude that last cell before asserting no OTHER field was left unfilled.
     const dataRows = out.section
       .split("\n")
       .filter((l) => l.startsWith("| ") && !l.startsWith("| Rank"));
-    expect(dataRows.every((row) => !row.includes(` ${NA} `))).toBe(true);
+    const cellsExceptSab = dataRows.map((row) =>
+      row
+        .split("|")
+        .map((c) => c.trim())
+        .filter((c) => c.length)
+        .slice(0, -1)
+    );
+    expect(cellsExceptSab.every((cells) => !cells.some((c) => c === NA || c === `**${NA}**`))).toBe(
+      true
+    );
   });
 
   it("fires reviews/photos/hours recommendations for this fixture, stays silent on rating/category/website", () => {
@@ -1162,7 +1228,8 @@ describe("field masks", () => {
       "places.photos",
       "places.businessStatus",
       "places.googleMapsUri",
-      "places.editorialSummary"
+      "places.editorialSummary",
+      "places.pureServiceAreaBusiness"
     ]) {
       expect(SEARCH_FIELD_MASK.split(",")).toContain(field);
     }
@@ -1198,11 +1265,19 @@ describe("domainLabel / resolveBusinessName", () => {
 });
 
 describe("ownProfileSearchBody", () => {
-  it("builds a plain textQuery, no locationBias", () => {
+  it("builds a plain textQuery, no locationBias, includePureServiceAreaBusinesses ON by default", () => {
     expect(ownProfileSearchBody("Northvalley Intelligence", "Marietta, GA")).toEqual({
       textQuery: "Northvalley Intelligence Marietta, GA",
-      pageSize: 5
+      pageSize: 5,
+      includePureServiceAreaBusinesses: true
     });
+  });
+
+  it("turns includePureServiceAreaBusinesses off when includeSab=false", () => {
+    expect(
+      ownProfileSearchBody("Northvalley Intelligence", "Marietta, GA", false)
+        .includePureServiceAreaBusinesses
+    ).toBe(false);
   });
 });
 
@@ -1253,7 +1328,8 @@ describe("extractOwnProfile", () => {
       primaryCategory: "Consultant",
       hoursListed: true,
       website: "https://northvalleyintel.com",
-      placeId: "p1"
+      placeId: "p1",
+      pureServiceAreaBusiness: null
     });
   });
 });
