@@ -314,6 +314,18 @@ function normalizeReport(report: AssessmentReport): AssessmentReport {
   const legacyReport = report as AssessmentReport & {
     demandSatisfaction?: DemandSatisfactionReport;
   };
+  const categories = report.categories.map(normalizeCategory);
+  const coverage =
+    report.coverage ??
+    categories.reduce(
+      (running, category) => ({
+        assessable: running.assessable + category.coverage.assessable,
+        total: running.total + category.coverage.total,
+        couldNotAssess: running.couldNotAssess + category.coverage.couldNotAssess,
+        notApplicable: running.notApplicable + category.coverage.notApplicable
+      }),
+      { assessable: 0, total: 0, couldNotAssess: 0, notApplicable: 0 }
+    );
 
   return {
     ...report,
@@ -331,7 +343,16 @@ function normalizeReport(report: AssessmentReport): AssessmentReport {
         "Evidence sufficiency details are unavailable for this older local report."
       ]
     },
-    categories: report.categories.map(normalizeCategory)
+    coverage,
+    indexability: report.indexability ?? {
+      findings: [],
+      coverage: { assessable: 0, total: 0, couldNotAssess: 0, notApplicable: 0 },
+      blockedOrNoindex: false,
+      qualifiesContentFindings: false,
+      explanation:
+        "This older locally stored report was created before indexability checks were added."
+    },
+    categories
   };
 }
 
@@ -359,12 +380,19 @@ function normalizeCategory(category: CategoryAssessment): CategoryAssessment {
   if (category.scoreExplanation && category.factors) {
     return {
       ...category,
+      coverage: category.coverage ?? {
+        assessable: category.factors.length,
+        total: category.factors.length,
+        couldNotAssess: 0,
+        notApplicable: 0
+      },
       factors: category.factors.map(normalizeFactor)
     };
   }
 
   const foundFactors = category.evidenceFound.map((evidence) => ({
     label: evidence,
+    status: "observed" as const,
     passed: true,
     evidence,
     evidenceDetails: [
@@ -381,6 +409,7 @@ function normalizeCategory(category: CategoryAssessment): CategoryAssessment {
   }));
   const missingFactors = category.evidenceMissing.map((evidence) => ({
     label: evidence,
+    status: "not_observed" as const,
     passed: false,
     evidence,
     evidenceDetails: [
@@ -405,6 +434,12 @@ function normalizeCategory(category: CategoryAssessment): CategoryAssessment {
     weight,
     scoreStatus: category.scoreStatus ?? "scored",
     factors: [...foundFactors, ...missingFactors],
+    coverage: {
+      assessable: totalFactors,
+      total: totalFactors,
+      couldNotAssess: 0,
+      notApplicable: 0
+    },
     scoreExplanation: {
       formula: `${foundFactors.length} of ${totalFactors} factors passed = ${category.score}/100. Category weight: ${weight}%. Weighted contribution: ${weightedContribution} points.`,
       passedFactors: foundFactors.length,
@@ -426,6 +461,7 @@ function normalizeFactor(
 ): CategoryScoreFactor {
   return {
     ...factor,
+    status: factor.status ?? (factor.passed ? "observed" : "not_observed"),
     check: factor.check ?? factor.label,
     evidenceDetails: factor.evidenceDetails ?? [
       "This locally stored result was created before detailed evidence tracing was added."
