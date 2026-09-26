@@ -7,14 +7,24 @@ import {
   type FetchAdapter
 } from "./index.js";
 
-function response(url: string, status: number, body = "", contentType = "text/html") {
+function response(
+  url: string,
+  status: number,
+  body = "",
+  contentType = "text/html",
+  extraHeaders: Record<string, string> = {}
+) {
   return {
     url,
     status,
     headers: {
       get(name: string) {
-        if (name.toLowerCase() === "content-type") return contentType;
-        return null;
+        const key = name.toLowerCase();
+        if (key === "content-type") return contentType;
+        const match = Object.entries(extraHeaders).find(
+          ([headerName]) => headerName.toLowerCase() === key
+        );
+        return match ? match[1] : null;
       }
     },
     async text() {
@@ -25,30 +35,55 @@ function response(url: string, status: number, body = "", contentType = "text/ht
 
 function mockedSite(
   pages: Record<string, string>,
-  options: { robots?: string; broken?: string[] } = {}
+  options: {
+    robots?: string;
+    broken?: string[];
+    /** URLs whose fetch throws (network error/timeout), for "could not assess" fixtures. */
+    unreachable?: string[];
+    /** requested URL -> final URL, for redirect-chain fixtures (body is read from the final URL's key in `pages`). */
+    redirects?: Record<string, string>;
+    /** Extra response headers per URL (e.g. X-Robots-Tag), for indexability fixtures. */
+    headers?: Record<string, Record<string, string>>;
+  } = {}
 ) {
   const calls: Array<{ url: string; method: string }> = [];
   const broken = new Set(options.broken ?? []);
+  const unreachable = new Set(options.unreachable ?? []);
+  const redirects = options.redirects ?? {};
+  const extraHeaders = options.headers ?? {};
 
   const fetchAdapter: FetchAdapter = async (url: string, init) => {
     const method = init?.method ?? "GET";
     calls.push({ url, method });
+
+    if (unreachable.has(url)) {
+      throw new Error("simulated network error");
+    }
 
     if (url === "https://example.com/robots.txt") {
       return response(url, options.robots ? 200 : 404, options.robots ?? "");
     }
 
     if (url === "https://example.com/sitemap.xml") {
-      return response(url, 200, "<urlset />", "application/xml");
+      return response(url, 200, "<urlset />", "application/xml", extraHeaders[url]);
     }
 
     if (method === "HEAD") {
-      return response(url, broken.has(url) ? 404 : 200, "");
+      return response(
+        url,
+        broken.has(url) ? 404 : 200,
+        "",
+        "text/html",
+        extraHeaders[url]
+      );
     }
 
-    const body = pages[url];
-    if (!body) return response(url, 404, "not found");
-    return response(url, 200, body);
+    const finalUrl = redirects[url] ?? url;
+    const body = pages[finalUrl];
+    if (!body) {
+      return response(finalUrl, 404, "not found", "text/html", extraHeaders[finalUrl]);
+    }
+    return response(finalUrl, 200, body, "text/html", extraHeaders[finalUrl]);
   };
 
   return { fetchAdapter, calls };
@@ -1235,5 +1270,256 @@ describe("favicon and structured-data detection", () => {
 
     expect(signals.localBusinessSchemaFound).toBe(false);
     expect(signals.pages[0]?.schemaTypes ?? []).not.toContain("LocalBusiness");
+  });
+});
+
+describe("three-state checks and coverage (B1)", () => {
+  it("marks a check that could not be run as could_not_assess, not a failure, and leaves it out of the denominator", async () => {
+    const { fetchAdapter } = mockedSite(
+      {
+        "https://example.com/": `<html><head><title>Local Services Co</title></head>
+          <body>
+            <a href="tel:770-555-1212">Call</a>
+            <p>${"Detailed public service content for local families across the county. ".repeat(20)}</p>
+          </body></html>`
+      },
+      { unreachable: ["https://example.com/sitemap.xml"] }
+    );
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-26T12:00:00.000Z") }
+    );
+
+    const security = report.categories.find(
+      (category) => category.category === "securityReliability"
+    )!;
+    const sitemapFactor = security.factors.find(
+      (factor) => factor.check === "Sitemap"
+    )!;
+
+    expect(sitemapFactor.status).toBe("could_not_assess");
+    expect(sitemapFactor.passed).toBe(false);
+    expect(sitemapFactor.evidence.toLowerCase()).toContain("could not");
+    expect(security.evidenceFound).not.toContain("sitemap.xml was found.");
+    expect(security.evidenceMissing).not.toContain("sitemap.xml was not found.");
+    expect(security.coverage.couldNotAssess).toBe(1);
+    expect(security.coverage.total).toBe(security.factors.length);
+    expect(security.coverage.assessable).toBe(security.coverage.total - 1);
+    // The category still has enough assessable checks (5 of 6) to be scored
+    // normally — the missing sitemap probe is excluded from the ratio
+    // rather than counted as a failure.
+    expect(security.scoreStatus).toBe("scored");
+    expect(report.coverage.couldNotAssess).toBeGreaterThanOrEqual(1);
+  });
+
+  it("rolls up a coverage figure (assessable of total) across every category plus indexability", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><head><title>Local Services Co</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <link rel="icon" href="/favicon.ico" />
+        </head>
+        <body>
+          <a href="tel:770-555-1212">Call</a>
+          <p>${"Detailed public service content for local families across the county. ".repeat(20)}</p>
+        </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-26T12:00:00.000Z") }
+    );
+
+    expect(report.coverage.total).toBeGreaterThan(0);
+    expect(report.coverage.assessable).toBeLessThanOrEqual(report.coverage.total);
+    expect(
+      report.coverage.assessable +
+        report.coverage.couldNotAssess +
+        report.coverage.notApplicable
+    ).toBe(report.coverage.total);
+  });
+});
+
+describe("indexability basics before content findings (B3)", () => {
+  it("reports a clean, indexable homepage with every indexability check assessable", async () => {
+    const { fetchAdapter } = mockedSite(
+      {
+        "https://example.com/": `<html><head><link rel="canonical" href="https://example.com/" /></head>
+          <body>
+            <a href="tel:770-555-1212">Call</a>
+            <p>${"Content for a clean indexability fixture describing local services. ".repeat(20)}</p>
+          </body></html>`
+      },
+      { robots: "User-agent: *\nAllow: /" }
+    );
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-26T12:00:00.000Z") }
+    );
+
+    expect(report.indexability.blockedOrNoindex).toBe(false);
+    expect(report.indexability.qualifiesContentFindings).toBe(false);
+    expect(report.indexability.coverage.couldNotAssess).toBe(0);
+
+    const httpStatus = report.indexability.findings.find(
+      (finding) => finding.check === "Final HTTP status"
+    )!;
+    expect(httpStatus.status).toBe("observed");
+
+    const canonical = report.indexability.findings.find(
+      (finding) => finding.check === "Canonical tag"
+    )!;
+    expect(canonical.status).toBe("observed");
+    expect(canonical.evidence).toContain("https://example.com/");
+
+    const noindexFinding = report.indexability.findings.find(
+      (finding) => finding.check === "Noindex directive"
+    )!;
+    expect(noindexFinding.status).toBe("not_observed");
+
+    const robotsReachability = report.indexability.findings.find(
+      (finding) => finding.check === "Robots.txt reachability"
+    )!;
+    expect(robotsReachability.status).toBe("observed");
+  });
+
+  it("records a redirect chain when the submitted URL redirects to a different final URL", async () => {
+    const { fetchAdapter } = mockedSite(
+      {
+        "https://example.com/home": `<html><body>
+          <a href="tel:770-555-1212">Call</a>
+          <p>${"Content for a redirect-chain fixture describing local services. ".repeat(20)}</p>
+        </body></html>`
+      },
+      { redirects: { "https://example.com/": "https://example.com/home" } }
+    );
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-26T12:00:00.000Z") }
+    );
+
+    const redirectFinding = report.indexability.findings.find(
+      (finding) => finding.check === "Redirect chain"
+    )!;
+    expect(redirectFinding.status).toBe("observed");
+    expect(redirectFinding.evidence).toContain("https://example.com/");
+    expect(redirectFinding.evidence).toContain("https://example.com/home");
+  });
+
+  it("marks 'robots.txt blocks crawled paths' not_applicable when robots.txt itself is missing", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>
+        <a href="tel:770-555-1212">Call</a>
+        <p>${"Content for a missing-robots fixture describing local services. ".repeat(20)}</p>
+      </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-26T12:00:00.000Z") }
+    );
+
+    const reachability = report.indexability.findings.find(
+      (finding) => finding.check === "Robots.txt reachability"
+    )!;
+    expect(reachability.status).toBe("not_observed");
+
+    const blocks = report.indexability.findings.find(
+      (finding) => finding.check === "Robots.txt blocks crawled paths"
+    )!;
+    expect(blocks.status).toBe("not_applicable");
+    expect(report.indexability.coverage.notApplicable).toBe(1);
+  });
+
+  it("reports a blocked path when robots.txt disallows a path this assessment tried to crawl", async () => {
+    const { fetchAdapter } = mockedSite(
+      {
+        "https://example.com/": `<html><body>
+          <a href="/blocked">Blocked</a>
+          <a href="tel:770-555-1212">Call</a>
+          <p>${"Content for a robots-blocking fixture describing local services. ".repeat(20)}</p>
+        </body></html>`
+      },
+      { robots: "User-agent: *\nDisallow: /blocked" }
+    );
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-26T12:00:00.000Z") }
+    );
+
+    const blocks = report.indexability.findings.find(
+      (finding) => finding.check === "Robots.txt blocks crawled paths"
+    )!;
+    expect(blocks.status).toBe("observed");
+    expect(blocks.evidence).toContain("/blocked");
+  });
+
+  it("qualifies a downstream content finding instead of scoring a bare failure when the homepage is noindex", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><head><title>Local Services Co</title>
+          <meta name="robots" content="noindex, nofollow" />
+        </head>
+        <body>
+          <a href="tel:770-555-1212">Call</a>
+          <p>${"General public content about the business without curated proof sections. ".repeat(15)}</p>
+        </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-26T12:00:00.000Z") }
+    );
+
+    const noindexFinding = report.indexability.findings.find(
+      (finding) => finding.check === "Noindex directive"
+    )!;
+    expect(noindexFinding.status).toBe("observed");
+    expect(noindexFinding.evidence).toContain("noindex");
+    expect(report.indexability.blockedOrNoindex).toBe(true);
+    expect(report.indexability.qualifiesContentFindings).toBe(true);
+
+    const trustSignals = report.categories.find(
+      (category) => category.category === "trustSignals"
+    )!;
+    const testimonialsFactor = trustSignals.factors.find(
+      (factor) => factor.check === "Testimonials"
+    )!;
+
+    // The genuine absence of testimonials on a noindex page cannot be
+    // reported as a confirmed content failure (B3) — it becomes
+    // could_not_assess (B1), not a bare "not found".
+    expect(testimonialsFactor.status).toBe("could_not_assess");
+    expect(testimonialsFactor.passed).toBe(false);
+    expect(testimonialsFactor.evidence.toLowerCase()).toContain("noindex");
+    expect(trustSignals.evidenceMissing).not.toContain("Testimonials were not found.");
+  });
+
+  it("does not qualify content findings when the homepage is indexable and reachable", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><head><title>Local Services Co</title></head>
+        <body>
+          <a href="tel:770-555-1212">Call</a>
+          <p>${"General public content about the business without curated proof sections. ".repeat(15)}</p>
+        </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-26T12:00:00.000Z") }
+    );
+
+    expect(report.indexability.qualifiesContentFindings).toBe(false);
+    const trustSignals = report.categories.find(
+      (category) => category.category === "trustSignals"
+    )!;
+    const testimonialsFactor = trustSignals.factors.find(
+      (factor) => factor.check === "Testimonials"
+    )!;
+    // Same missing evidence, but an indexable page: a genuine, scored failure.
+    expect(testimonialsFactor.status).toBe("not_observed");
+    expect(trustSignals.evidenceMissing).toContain("Testimonials were not found.");
   });
 });

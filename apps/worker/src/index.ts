@@ -8,10 +8,15 @@ import {
   scoringWeights,
   type AssessmentReport,
   type CategoryAssessment,
+  type CategoryScoreFactor,
+  type CheckStatus,
+  type CoverageSummary,
   type CrawlMetadata,
   type CrawlDecision,
   type EvidenceQuality,
   type ExtractedSignals,
+  type IndexabilityFinding,
+  type IndexabilitySummary,
   type ScoringCategory,
   validateAssessmentUrl
 } from "@northvalleyintel/assessment-shared";
@@ -120,13 +125,26 @@ export async function assessWebsite(
     passiveAssetCheckLimit: options.passiveAssetCheckLimit,
     passiveAssetTimeoutMs: options.passiveAssetTimeoutMs
   });
-  const categories = scoreSignals(signals, pagespeed, evidenceQuality.reportQuality);
+  const indexability = assessIndexability(
+    startedUrl,
+    crawl.pages,
+    crawl.robots,
+    crawl.skippedUrls,
+    signals.sitemapCheckStatus
+  );
+  const categories = scoreSignals(
+    signals,
+    pagespeed,
+    evidenceQuality.reportQuality,
+    indexability
+  );
   const demandSatisfaction = assessDemandSatisfaction({
     websiteEvidence: {
       pages: signals.pages
     }
   });
   const overallScore = weightedOverallScore(categories);
+  const coverage = rollupCoverage(categories, indexability);
   const createdAt = (options.now ?? (() => new Date()))().toISOString();
   const domain = startedUrl.hostname;
 
@@ -175,6 +193,8 @@ export async function assessWebsite(
     disclaimer,
     evidenceQuality: evidenceQuality.reportQuality,
     crawlMetadata,
+    coverage,
+    indexability,
     createdAt
   };
 
@@ -326,7 +346,13 @@ export async function crawlWebsite(
       finalUrl.href,
       fetched.response.status,
       textResult.text,
-      textResult
+      textResult,
+      {
+        requestedUrl: next.url.href,
+        headerNoindex: /noindex/i.test(
+          fetched.response.headers.get("x-robots-tag") ?? ""
+        )
+      }
     );
     pages.push(page);
     decisions.push({
@@ -398,6 +424,18 @@ export async function extractSignals(
       alt: image.alt
     }))
   );
+
+  const faviconProbe = await faviconExists(startedUrl, fetchAdapter, {
+    requestTimeoutMs: options.requestTimeoutMs
+  });
+  const faviconCheckStatus: "found" | "not_found" | "could_not_assess" = pages.some(
+    (page) => page.iconLinkFound
+  )
+    ? "found"
+    : faviconProbe;
+  const sitemapCheckStatus = await sitemapExists(startedUrl, fetchAdapter, {
+    requestTimeoutMs: options.requestTimeoutMs
+  });
 
   const linkChecks = await checkBrokenAssets(
     startedUrl,
@@ -516,15 +554,11 @@ export async function extractSignals(
     brokenLinks: linkChecks,
     brokenImages: imageChecks,
     https: startedUrl.protocol === "https:",
-    faviconFound:
-      pages.some((page) => page.iconLinkFound) ||
-      (await faviconExists(startedUrl, fetchAdapter, {
-        requestTimeoutMs: options.requestTimeoutMs
-      })),
+    faviconFound: faviconCheckStatus === "found",
+    faviconCheckStatus,
     openGraphImageFound: pages.some((page) => page.openGraphImageFound),
-    sitemapFound: await sitemapExists(startedUrl, fetchAdapter, {
-      requestTimeoutMs: options.requestTimeoutMs
-    }),
+    sitemapFound: sitemapCheckStatus === "found",
+    sitemapCheckStatus,
     securityHeaders: collectSecurityHeaders(pages)
   };
 }
@@ -532,8 +566,18 @@ export async function extractSignals(
 function scoreSignals(
   signals: ExtractedSignals,
   pagespeed: CrawlMetadata["pagespeed"],
-  evidenceQuality: EvidenceQuality
+  evidenceQuality: EvidenceQuality,
+  indexability: IndexabilitySummary
 ): CategoryAssessment[] {
+  // B3: when the homepage is noindex/blocked/erroring, content-presence
+  // checks cannot trust an absence as a genuine failure — see
+  // ContentFindingsQualifier in buildCategory. Performance and
+  // Security & Reliability are not content-presence categories, so they
+  // are not qualified.
+  const contentFindingsQualifier = {
+    qualifies: indexability.qualifiesContentFindings,
+    reason: indexability.explanation
+  };
   const reviewedPages = pagesCheckedDetails(signals.pages);
   const phoneReview = phoneEvidenceDetails(signals);
   const locationReview = locationEvidenceDetails(signals);
@@ -634,7 +678,8 @@ function scoreSignals(
           { missingDetails: mapsReview }
         )
       ],
-      reviewedPages
+      reviewedPages,
+      contentFindingsQualifier
     ),
     buildCategory(
       "leadConversion",
@@ -696,7 +741,8 @@ function scoreSignals(
           "Keep Contact, Book, Schedule, or Request Estimate visible in the main navigation."
         )
       ],
-      reviewedPages
+      reviewedPages,
+      contentFindingsQualifier
     ),
     buildCategory(
       "trustSignals",
@@ -774,7 +820,8 @@ function scoreSignals(
           "Add project examples, before-and-after stories, or simple case studies."
         )
       ],
-      reviewedPages
+      reviewedPages,
+      contentFindingsQualifier
     ),
     buildCategory(
       "messageClarity",
@@ -821,7 +868,8 @@ function scoreSignals(
           "Add specific differentiators such as speed, specialization, guarantee, local ownership, process, or proof."
         )
       ],
-      reviewedPages
+      reviewedPages,
+      contentFindingsQualifier
     ),
     buildCategory(
       "mobileExperience",
@@ -858,7 +906,8 @@ function scoreSignals(
           "Add or simplify a mobile-friendly contact, estimate, or appointment form."
         )
       ],
-      reviewedPages
+      reviewedPages,
+      contentFindingsQualifier
     ),
     buildCategory(
       "aiDiscoverability",
@@ -912,7 +961,8 @@ function scoreSignals(
           { missingDetails: locationReview }
         )
       ],
-      reviewedPages
+      reviewedPages,
+      contentFindingsQualifier
     ),
     pagespeed.status === "success"
       ? buildMeasuredPerformanceCategory(pagespeed)
@@ -979,21 +1029,42 @@ function scoreSignals(
           "Sitemap",
           "sitemap.xml was found.",
           "We found a sitemap file that can help crawlers discover public pages.",
-          "sitemap.xml was not found.",
-          "A sitemap helps search systems find important pages more reliably.",
+          signals.sitemapCheckStatus === "could_not_assess"
+            ? "sitemap.xml reachability could not be confirmed."
+            : "sitemap.xml was not found.",
+          signals.sitemapCheckStatus === "could_not_assess"
+            ? "The sitemap.xml request failed (network error or timeout), so we could not confirm whether a sitemap exists. This is not the same as confirming it is missing."
+            : "A sitemap helps search systems find important pages more reliably.",
           "Navigation links help humans; a sitemap helps crawlers discover the site structure.",
-          "Create and submit a sitemap that includes important public pages."
+          signals.sitemapCheckStatus === "could_not_assess"
+            ? "Re-run the assessment, or confirm sitemap.xml is reachable directly."
+            : "Create and submit a sitemap that includes important public pages.",
+          signals.sitemapCheckStatus === "could_not_assess"
+            ? { status: "could_not_assess" }
+            : {}
         ),
         evidence(
           signals.faviconFound,
           "Site icon",
           "Favicon or site icon was found.",
           "We found a favicon or site icon.",
-          "Favicon was not found.",
-          "A site icon helps the website look polished in browser tabs, search results, and shared links.",
+          signals.faviconCheckStatus === "could_not_assess"
+            ? "Favicon reachability could not be confirmed."
+            : "Favicon was not found.",
+          signals.faviconCheckStatus === "could_not_assess"
+            ? "The /favicon.ico request failed (network error or timeout), so we could not confirm whether a favicon exists. This is not the same as confirming it is missing."
+            : "A site icon helps the website look polished in browser tabs, search results, and shared links.",
           "Branding on the page helps visitors; a favicon helps recognition in browser and search surfaces.",
-          "Add a favicon or site icon.",
-          { foundDetails: faviconFoundReview, missingDetails: reviewedPages }
+          signals.faviconCheckStatus === "could_not_assess"
+            ? "Re-run the assessment, or confirm /favicon.ico is reachable directly."
+            : "Add a favicon or site icon.",
+          {
+            foundDetails: faviconFoundReview,
+            missingDetails: reviewedPages,
+            ...(signals.faviconCheckStatus === "could_not_assess"
+              ? { status: "could_not_assess" as const }
+              : {})
+          }
         ),
         evidence(
           signals.openGraphImageFound,
@@ -1011,64 +1082,168 @@ function scoreSignals(
   ];
 }
 
+type CategoryCheckInput = {
+  passed: boolean;
+  /** Explicit three-state override; see `evidence()`. */
+  status?: CheckStatus;
+  check: string;
+  found: string;
+  foundExplanation: string;
+  foundDetails: string[];
+  missing: string;
+  missingExplanation: string;
+  missingDetails: string[];
+  existingContentNote: string;
+  recommendedAction: string;
+};
+
+/**
+ * B3: when the primary page is noindex/blocked/erroring, a category's
+ * genuinely-missing (not_observed) checks are downgraded to
+ * could_not_assess instead of being scored as content failures — we cannot
+ * trust an absence-of-evidence finding drawn from a page we know was
+ * excluded from indexing or could not be reached in the first place.
+ */
+type ContentFindingsQualifier = {
+  qualifies: boolean;
+  reason: string;
+};
+
+/** A category needs at least half its checks assessable (observed or
+ * not_observed, rounded up) before it is scored. This is the B1 judgement
+ * call: without this floor, a category where most checks became
+ * could_not_assess could still show a clean 100/100 off a single lucky
+ * observed check, which would silently look BETTER than a fully-assessed
+ * category with a real gap — exactly the "score cannot silently rise"
+ * risk the handoff calls out. Below the floor the category is marked
+ * "unavailable", mirroring the existing whole-category Performance pattern. */
+function hasEnoughCoverageToScore(assessable: number, total: number): boolean {
+  return assessable > 0 && assessable * 2 >= total;
+}
+
 function buildCategory(
   category: ScoringCategory,
   confidence: CategoryAssessment["scoreExplanation"]["confidence"],
-  checks: Array<{
-    passed: boolean;
-    check: string;
-    found: string;
-    foundExplanation: string;
-    foundDetails: string[];
-    missing: string;
-    missingExplanation: string;
-    missingDetails: string[];
-    existingContentNote: string;
-    recommendedAction: string;
-  }>,
-  defaultEvidenceDetails: string[] = []
+  checks: CategoryCheckInput[],
+  defaultEvidenceDetails: string[] = [],
+  qualifier?: ContentFindingsQualifier
 ): CategoryAssessment {
-  const passed = checks.filter((check) => check.passed);
-  const failed = checks.filter((check) => !check.passed);
-  const score = Math.round((passed.length / checks.length) * 100);
   const weight = scoringWeights[category];
-  const weightedContribution = Math.round((score * weight) / 100);
-  const factorImpact = Math.round(100 / checks.length);
-  const factors = checks.map((check) => ({
-    label: check.passed ? check.found : check.missing,
-    passed: check.passed,
-    evidence: check.passed ? check.found : check.missing,
-    evidenceDetails: check.passed
-      ? check.foundDetails
-      : check.missingDetails.length > 0
-        ? check.missingDetails
-        : defaultEvidenceDetails,
-    check: check.check,
-    businessExplanation: check.passed
-      ? check.foundExplanation
-      : check.missingExplanation,
-    existingContentNote: check.existingContentNote,
-    recommendedAction: check.recommendedAction,
-    scoreImpact: factorImpact
-  }));
+  const totalFactors = checks.length;
+
+  const classified = checks.map((check) => {
+    const originalStatus: CheckStatus =
+      check.status ?? (check.passed ? "observed" : "not_observed");
+    const downgraded =
+      Boolean(qualifier?.qualifies) && originalStatus === "not_observed";
+    const status: CheckStatus = downgraded ? "could_not_assess" : originalStatus;
+    return { check, status, downgraded };
+  });
+
+  const observed = classified.filter((entry) => entry.status === "observed");
+  const notObserved = classified.filter((entry) => entry.status === "not_observed");
+  const couldNotAssess = classified.filter(
+    (entry) => entry.status === "could_not_assess"
+  );
+  const notApplicable = classified.filter((entry) => entry.status === "not_applicable");
+  const assessable = observed.length + notObserved.length;
+
+  const coverage: CoverageSummary = {
+    assessable,
+    total: totalFactors,
+    couldNotAssess: couldNotAssess.length,
+    notApplicable: notApplicable.length
+  };
+
+  const enoughCoverage = hasEnoughCoverageToScore(assessable, totalFactors);
+  const score = enoughCoverage ? Math.round((observed.length / assessable) * 100) : 0;
+  const weightedContribution = enoughCoverage ? Math.round((score * weight) / 100) : 0;
+  const scoreStatus: CategoryAssessment["scoreStatus"] = enoughCoverage
+    ? "scored"
+    : "unavailable";
+  const factorImpact = Math.round(100 / totalFactors);
+
+  const factors: CategoryScoreFactor[] = classified.map(
+    ({ check, status, downgraded }) => {
+      if (status === "observed") {
+        return {
+          label: check.found,
+          status,
+          passed: true,
+          evidence: check.found,
+          evidenceDetails:
+            check.foundDetails.length > 0 ? check.foundDetails : defaultEvidenceDetails,
+          check: check.check,
+          businessExplanation: check.foundExplanation,
+          existingContentNote: check.existingContentNote,
+          recommendedAction: check.recommendedAction,
+          scoreImpact: factorImpact
+        };
+      }
+
+      if (downgraded) {
+        return {
+          label: `${check.check}: could not be confirmed`,
+          status,
+          passed: false,
+          evidence: `Could not confirm "${check.check}" from the pages this assessment could read with confidence: ${qualifier!.reason}`,
+          evidenceDetails: [
+            qualifier!.reason,
+            ...(check.missingDetails.length > 0
+              ? check.missingDetails
+              : defaultEvidenceDetails)
+          ],
+          check: check.check,
+          businessExplanation: `${qualifier!.reason} ${check.missingExplanation}`,
+          existingContentNote: check.existingContentNote,
+          recommendedAction: check.recommendedAction,
+          scoreImpact: factorImpact
+        };
+      }
+
+      return {
+        label: check.missing,
+        status,
+        passed: false,
+        evidence: check.missing,
+        evidenceDetails:
+          check.missingDetails.length > 0
+            ? check.missingDetails
+            : defaultEvidenceDetails,
+        check: check.check,
+        businessExplanation: check.missingExplanation,
+        existingContentNote: check.existingContentNote,
+        recommendedAction: check.recommendedAction,
+        scoreImpact: factorImpact
+      };
+    }
+  );
+
+  const formula = enoughCoverage
+    ? `${observed.length} of ${assessable} assessable factors passed = ${score}/100 (coverage: ${assessable} of ${totalFactors} checks assessable; ${coverage.couldNotAssess} could not be assessed, ${coverage.notApplicable} not applicable). Category weight: ${weight}%. Weighted contribution: ${weightedContribution} points.`
+    : `${scoringCategoryLabels[category]} was not included in the overall score because too few checks could be assessed (${assessable} of ${totalFactors} checks assessable).`;
+  const summary = enoughCoverage
+    ? `${scoringCategoryLabels[category]} scored ${score}/100 because ${observed.length} of ${assessable} assessable evidence checks passed (coverage ${assessable} of ${totalFactors}).`
+    : `${scoringCategoryLabels[category]} was not scored because only ${assessable} of ${totalFactors} checks could be assessed.`;
 
   return {
     category,
     label: scoringCategoryLabels[category],
     weight,
-    scoreStatus: "scored",
+    scoreStatus,
     score,
     factors,
+    coverage,
     scoreExplanation: {
-      formula: `${passed.length} of ${checks.length} factors passed = ${score}/100. Category weight: ${weight}%. Weighted contribution: ${weightedContribution} points.`,
-      passedFactors: passed.length,
-      totalFactors: checks.length,
+      formula,
+      passedFactors: observed.length,
+      totalFactors,
       weightedContribution,
       confidence,
-      summary: `${scoringCategoryLabels[category]} scored ${score}/100 because ${passed.length} of ${checks.length} evidence checks passed.`
+      summary
     },
-    evidenceFound: passed.map((check) => check.found),
-    evidenceMissing: failed.map((check) => check.missing),
+    evidenceFound: observed.map((entry) => entry.check.found),
+    evidenceMissing: notObserved.map((entry) => entry.check.missing),
     businessImpact: businessImpactFor(category, score),
     recommendedFix: recommendedFixFor(category)
   };
@@ -1082,10 +1257,11 @@ function buildMeasuredPerformanceCategory(
   const weightedContribution = Math.round((score * weight) / 100);
   const isGood = score >= 90;
   const evidenceText = `PageSpeed mobile score was ${score}.`;
-  const factor = {
+  const factor: CategoryScoreFactor = {
     label: isGood
       ? evidenceText
       : `Mobile PageSpeed score was ${score}, below the recommended good range.`,
+    status: isGood ? "observed" : "not_observed",
     passed: isGood,
     evidence: isGood
       ? evidenceText
@@ -1113,6 +1289,7 @@ function buildMeasuredPerformanceCategory(
     scoreStatus: "scored",
     score,
     factors: [factor],
+    coverage: { assessable: 1, total: 1, couldNotAssess: 0, notApplicable: 0 },
     scoreExplanation: {
       formula: `PageSpeed mobile performance score = ${score}/100. Category weight: ${weight}%. Weighted contribution: ${weightedContribution} points.`,
       passedFactors: isGood ? 1 : 0,
@@ -1264,10 +1441,24 @@ function evidence(
   missingExplanation: string,
   existingContentNote: string,
   recommendedAction: string,
-  details: { foundDetails?: string[]; missingDetails?: string[] } = {}
+  details: {
+    foundDetails?: string[];
+    missingDetails?: string[];
+    /**
+     * Explicit three-state override (B1). When omitted, the status is
+     * inferred from `passed` ("observed" | "not_observed"). Pass
+     * "could_not_assess" when a check genuinely could not be run (e.g. a
+     * network probe failed) or "not_applicable" when the check does not
+     * apply to this business — write `missing`/`missingExplanation` to
+     * describe THAT state, not a false negative, since both statuses read
+     * from the `missing*` fields.
+     */
+    status?: Extract<CheckStatus, "could_not_assess" | "not_applicable">;
+  } = {}
 ) {
   return {
     passed,
+    status: details.status,
     check,
     found,
     foundExplanation,
@@ -1445,6 +1636,227 @@ function recommendedFixFor(category: ScoringCategory): string {
       "Fix broken links and missing site basics so visitors and search engines see a reliable business presence."
   };
   return fixes[category];
+}
+
+/**
+ * B3 — indexability basics, deterministic and cheap, run before any content
+ * finding: final HTTP status, redirect chain, canonical tag, noindex (meta
+ * and header), robots.txt reachability and whether it blocks the crawled
+ * paths, and sitemap presence. Evaluated against the primary (first-crawled,
+ * i.e. the submitted) page, since that is what every content signal in this
+ * assessment is drawn from.
+ *
+ * Judgement call: a robots.txt block on a NON-primary path is still reported
+ * as its own finding, but by itself does not qualify content findings —
+ * only a noindex directive or an error status on the primary page does. A
+ * blocked primary page cannot reach this function at all (the crawl would
+ * have produced zero pages and `evaluateEvidenceQuality` already throws
+ * InsufficientEvidenceError before scoring is attempted).
+ */
+function assessIndexability(
+  startedUrl: URL,
+  pages: CrawledPage[],
+  robots: RobotsRules,
+  skippedUrls: Array<{ url: string; reason: string }>,
+  sitemapCheckStatus: "found" | "not_found" | "could_not_assess"
+): IndexabilitySummary {
+  const primaryPage = pages[0] as CrawledPage | undefined;
+  const findings: IndexabilityFinding[] = [];
+
+  const httpStatusOk = primaryPage ? primaryPage.status < 400 : false;
+  findings.push({
+    check: "Final HTTP status",
+    label: primaryPage
+      ? `The homepage responded with HTTP ${primaryPage.status}.`
+      : "The homepage response could not be read.",
+    status: !primaryPage
+      ? "could_not_assess"
+      : httpStatusOk
+        ? "observed"
+        : "not_observed",
+    evidence: primaryPage
+      ? `Final HTTP status for ${primaryPage.url}: ${primaryPage.status}.`
+      : "No page response was available to read a final HTTP status from.",
+    evidenceDetails: primaryPage
+      ? [
+          `Requested ${primaryPage.requestedUrl}; final URL ${primaryPage.url}; status ${primaryPage.status}.`
+        ]
+      : []
+  });
+
+  const redirected = Boolean(primaryPage?.redirectedFrom);
+  findings.push({
+    check: "Redirect chain",
+    label: redirected
+      ? `The submitted URL redirected to ${primaryPage!.url}.`
+      : "No redirect was observed from the submitted URL to the homepage.",
+    status: redirected ? "observed" : "not_observed",
+    evidence: redirected
+      ? `Redirected from ${primaryPage!.redirectedFrom} to ${primaryPage!.url}.`
+      : "The submitted URL was served directly, without a redirect.",
+    evidenceDetails: redirected
+      ? [`${primaryPage!.redirectedFrom} -> ${primaryPage!.url}`]
+      : []
+  });
+
+  const canonicalUrl = primaryPage?.canonicalUrl ?? null;
+  findings.push({
+    check: "Canonical tag",
+    label: canonicalUrl
+      ? `A canonical tag was found: ${canonicalUrl}.`
+      : "No canonical tag was found on the homepage.",
+    status: canonicalUrl ? "observed" : "not_observed",
+    evidence: canonicalUrl
+      ? `<link rel="canonical" href="${canonicalUrl}"> was found on the homepage.`
+      : 'No <link rel="canonical"> tag was found on the homepage.',
+    evidenceDetails: canonicalUrl ? [canonicalUrl] : []
+  });
+
+  const metaNoindex = Boolean(primaryPage?.metaRobotsNoindex);
+  const headerNoindex = Boolean(primaryPage?.headerNoindex);
+  const noindex = metaNoindex || headerNoindex;
+  const noindexSource =
+    metaNoindex && headerNoindex
+      ? "a robots meta tag and an X-Robots-Tag response header"
+      : metaNoindex
+        ? "a robots meta tag"
+        : headerNoindex
+          ? "an X-Robots-Tag response header"
+          : "";
+  findings.push({
+    check: "Noindex directive",
+    label: noindex
+      ? `A noindex directive was found (${noindexSource}).`
+      : "No noindex directive was found.",
+    status: noindex ? "observed" : "not_observed",
+    evidence: noindex
+      ? `The homepage carries a noindex directive via ${noindexSource}.`
+      : "Neither a noindex meta tag nor an X-Robots-Tag header was found on the homepage.",
+    evidenceDetails: noindex ? [`Source: ${noindexSource}.`] : []
+  });
+
+  findings.push({
+    check: "Robots.txt reachability",
+    label: robots.found ? "robots.txt was reachable." : "robots.txt was not found.",
+    status: robots.found ? "observed" : "not_observed",
+    evidence: robots.found
+      ? "robots.txt returned a successful response."
+      : "robots.txt could not be found at the site root.",
+    evidenceDetails: [new URL("/robots.txt", startedUrl.origin).href]
+  });
+
+  const blockedPaths = skippedUrls.filter(
+    (skipped) => skipped.reason === "blocked by robots.txt"
+  );
+  findings.push({
+    check: "Robots.txt blocks crawled paths",
+    label: !robots.found
+      ? "Not applicable: no robots.txt was found to block anything."
+      : blockedPaths.length > 0
+        ? `robots.txt blocked ${blockedPaths.length} of the paths this assessment tried to crawl.`
+        : "robots.txt did not block any path this assessment tried to crawl.",
+    status: !robots.found
+      ? "not_applicable"
+      : blockedPaths.length > 0
+        ? "observed"
+        : "not_observed",
+    evidence: !robots.found
+      ? "No robots.txt rules exist to check crawled paths against."
+      : blockedPaths.length > 0
+        ? `Blocked: ${blockedPaths
+            .slice(0, 5)
+            .map((path) => path.url)
+            .join(", ")}.`
+        : "None of the discovered paths were disallowed by robots.txt.",
+    evidenceDetails: blockedPaths.slice(0, 8).map((path) => path.url)
+  });
+
+  findings.push({
+    check: "Sitemap presence",
+    label:
+      sitemapCheckStatus === "found"
+        ? "sitemap.xml was found."
+        : sitemapCheckStatus === "could_not_assess"
+          ? "sitemap.xml reachability could not be confirmed."
+          : "sitemap.xml was not found.",
+    status:
+      sitemapCheckStatus === "found"
+        ? "observed"
+        : sitemapCheckStatus === "could_not_assess"
+          ? "could_not_assess"
+          : "not_observed",
+    evidence:
+      sitemapCheckStatus === "found"
+        ? "sitemap.xml responded successfully."
+        : sitemapCheckStatus === "could_not_assess"
+          ? "The sitemap.xml request failed (network error or timeout), so reachability could not be confirmed."
+          : "sitemap.xml was not found at the site root.",
+    evidenceDetails: []
+  });
+
+  const assessableFindings = findings.filter(
+    (finding) => finding.status === "observed" || finding.status === "not_observed"
+  );
+  const couldNotAssessFindings = findings.filter(
+    (finding) => finding.status === "could_not_assess"
+  );
+  const notApplicableFindings = findings.filter(
+    (finding) => finding.status === "not_applicable"
+  );
+  const coverage: CoverageSummary = {
+    assessable: assessableFindings.length,
+    total: findings.length,
+    couldNotAssess: couldNotAssessFindings.length,
+    notApplicable: notApplicableFindings.length
+  };
+
+  const primaryStatusBad = primaryPage ? primaryPage.status >= 400 : false;
+  const blockedOrNoindex = noindex || primaryStatusBad;
+  let explanation: string;
+  if (noindex && primaryStatusBad) {
+    explanation =
+      "The homepage returned an error HTTP status and carries a noindex directive, so downstream content findings could not be confirmed as genuine absences — they are reported as could-not-assess instead of failures.";
+  } else if (noindex) {
+    explanation =
+      "The homepage carries a noindex directive, so downstream content findings could not be confirmed as genuine absences — they are reported as could-not-assess instead of failures.";
+  } else if (primaryStatusBad) {
+    explanation =
+      "The homepage returned an error HTTP status, so downstream content findings could not be confirmed as genuine absences — they are reported as could-not-assess instead of failures.";
+  } else {
+    explanation =
+      "The homepage is indexable and reachable; downstream content findings are scored normally.";
+  }
+
+  return {
+    findings,
+    coverage,
+    blockedOrNoindex,
+    qualifiesContentFindings: blockedOrNoindex,
+    explanation
+  };
+}
+
+/** Coverage rolled up across every scoring category plus the indexability group. */
+function rollupCoverage(
+  categories: CategoryAssessment[],
+  indexability: IndexabilitySummary
+): CoverageSummary {
+  const totals = categories.reduce(
+    (running, category) => ({
+      assessable: running.assessable + category.coverage.assessable,
+      total: running.total + category.coverage.total,
+      couldNotAssess: running.couldNotAssess + category.coverage.couldNotAssess,
+      notApplicable: running.notApplicable + category.coverage.notApplicable
+    }),
+    { assessable: 0, total: 0, couldNotAssess: 0, notApplicable: 0 }
+  );
+
+  return {
+    assessable: totals.assessable + indexability.coverage.assessable,
+    total: totals.total + indexability.coverage.total,
+    couldNotAssess: totals.couldNotAssess + indexability.coverage.couldNotAssess,
+    notApplicable: totals.notApplicable + indexability.coverage.notApplicable
+  };
 }
 
 function weightedOverallScore(categories: CategoryAssessment[]): number {
@@ -1669,7 +2081,8 @@ function parsePage(
   url: string,
   status: number,
   html: string,
-  readResult: { bytesRead: number; truncated: boolean }
+  readResult: { bytesRead: number; truncated: boolean },
+  indexabilitySignals: { requestedUrl: string; headerNoindex: boolean }
 ): CrawledPage {
   const title = firstMatch(html, /<title[^>]*>([\s\S]*?)<\/title>/i);
   const metaDescription = firstMatch(
@@ -1684,6 +2097,7 @@ function parsePage(
   const schemaTypes = extractSchemaTypes(html);
   const legacyLocalBusinessSchemaMatch =
     /"@type"\s*:\s*"[^"]*LocalBusiness|LocalBusiness/i.test(html);
+  const requestedUrl = indexabilitySignals.requestedUrl;
 
   return {
     url,
@@ -1704,8 +2118,46 @@ function parsePage(
     schemaTypes,
     localBusinessSchemaFound:
       schemaTypes.some((type) => BUSINESS_SCHEMA_TYPES.has(type)) ||
-      legacyLocalBusinessSchemaMatch
+      legacyLocalBusinessSchemaMatch,
+    requestedUrl,
+    redirectedFrom: requestedUrl !== url ? requestedUrl : null,
+    canonicalUrl: extractCanonicalUrl(html),
+    metaRobotsNoindex: hasNoindexMeta(html),
+    headerNoindex: indexabilitySignals.headerNoindex
   };
+}
+
+/**
+ * The href of a <link rel="canonical"> tag, if present, regardless of
+ * attribute order.
+ */
+function extractCanonicalUrl(html: string): string | null {
+  const linkPattern = /<link\b[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = linkPattern.exec(html)) !== null) {
+    const relValue = /\brel=["']([^"']*)["']/i.exec(match[0])?.[1] ?? "";
+    if (!/\bcanonical\b/i.test(relValue)) continue;
+    const href = /\bhref=["']([^"']*)["']/i.exec(match[0])?.[1];
+    if (href) return decodeHtmlAttribute(href);
+  }
+  return null;
+}
+
+/**
+ * Whether a <meta name="robots"|"googlebot" content="...noindex..."> tag is
+ * present, regardless of attribute order or quote style (B3: indexability
+ * basics).
+ */
+function hasNoindexMeta(html: string): boolean {
+  const metaPattern = /<meta\b[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = metaPattern.exec(html)) !== null) {
+    const nameValue = /\bname=["']([^"']*)["']/i.exec(match[0])?.[1] ?? "";
+    if (!/^(robots|googlebot)$/i.test(nameValue)) continue;
+    const contentValue = /\bcontent=["']([^"']*)["']/i.exec(match[0])?.[1] ?? "";
+    if (/\bnoindex\b/i.test(contentValue)) return true;
+  }
+  return false;
 }
 
 /**
@@ -2172,11 +2624,21 @@ async function checkBrokenAssets(
   );
 }
 
+type ProbeStatus = "found" | "not_found" | "could_not_assess";
+
+/**
+ * B1 fix: a network error or timeout on the probe itself is NOT the same as
+ * an explicit "not found" response. Collapsing them was exactly the bug
+ * pattern that produced the original favicon/schema false alarm — treating
+ * "could not check" as "fail". A thrown error (timeout, DNS failure,
+ * connection reset) now yields "could_not_assess"; only an explicit HTTP
+ * response status decides "found" vs "not_found".
+ */
 async function sitemapExists(
   startedUrl: URL,
   fetchAdapter: FetchAdapter,
   options: { requestTimeoutMs?: number } = {}
-): Promise<boolean> {
+): Promise<ProbeStatus> {
   try {
     const fetched = await safeFetch(
       fetchAdapter,
@@ -2186,9 +2648,9 @@ async function sitemapExists(
         requestTimeoutMs: options.requestTimeoutMs ?? crawlerPolicy.requestTimeoutMs
       }
     );
-    return fetched.response.status < 400;
+    return fetched.response.status < 400 ? "found" : "not_found";
   } catch {
-    return false;
+    return "could_not_assess";
   }
 }
 
@@ -2196,7 +2658,7 @@ async function faviconExists(
   startedUrl: URL,
   fetchAdapter: FetchAdapter,
   options: { requestTimeoutMs?: number } = {}
-): Promise<boolean> {
+): Promise<ProbeStatus> {
   try {
     const fetched = await safeFetch(
       fetchAdapter,
@@ -2215,11 +2677,11 @@ async function faviconExists(
           requestTimeoutMs: options.requestTimeoutMs ?? crawlerPolicy.requestTimeoutMs
         }
       );
-      return retried.response.status < 400;
+      return retried.response.status < 400 ? "found" : "not_found";
     }
-    return fetched.response.status < 400;
+    return fetched.response.status < 400 ? "found" : "not_found";
   } catch {
-    return false;
+    return "could_not_assess";
   }
 }
 

@@ -140,6 +140,32 @@ export const assessmentUrlSchema = z
     }
   });
 
+/**
+ * Three-state (plus not-applicable) result of a single check.
+ * "could_not_assess" and "not_applicable" both leave the scoring denominator:
+ * a check we could not run is never counted as a failure, and a check that
+ * does not apply to this business is never counted as either a pass or a
+ * failure. Only "observed" and "not_observed" are assessable.
+ */
+export type CheckStatus =
+  | "observed"
+  | "not_observed"
+  | "could_not_assess"
+  | "not_applicable";
+
+/**
+ * How many of a group's checks could actually be evaluated. `assessable` is
+ * the denominator used for scoring (observed + not_observed); `total` is
+ * every check attempted, assessable or not. `couldNotAssess` and
+ * `notApplicable` together make up `total - assessable`.
+ */
+export type CoverageSummary = {
+  assessable: number;
+  total: number;
+  couldNotAssess: number;
+  notApplicable: number;
+};
+
 export type CategoryAssessment = {
   category: ScoringCategory;
   label: string;
@@ -147,6 +173,7 @@ export type CategoryAssessment = {
   scoreStatus: "scored" | "unavailable";
   score: number;
   factors: CategoryScoreFactor[];
+  coverage: CoverageSummary;
   scoreExplanation: {
     formula: string;
     passedFactors: number;
@@ -163,6 +190,8 @@ export type CategoryAssessment = {
 
 export type CategoryScoreFactor = {
   label: string;
+  status: CheckStatus;
+  /** Backward-compatible convenience: true only when status is "observed". */
   passed: boolean;
   evidence: string;
   evidenceDetails: string[];
@@ -171,6 +200,29 @@ export type CategoryScoreFactor = {
   existingContentNote: string;
   recommendedAction: string;
   scoreImpact: number;
+};
+
+/**
+ * One indexability finding (B3): the deterministic, cheap checks that run
+ * before any content finding — whether the page/site can even be indexed
+ * and crawled at all.
+ */
+export type IndexabilityFinding = {
+  check: string;
+  label: string;
+  status: CheckStatus;
+  evidence: string;
+  evidenceDetails: string[];
+};
+
+export type IndexabilitySummary = {
+  findings: IndexabilityFinding[];
+  coverage: CoverageSummary;
+  /** True when the primary page is noindex, blocked, or erroring. */
+  blockedOrNoindex: boolean;
+  /** True when downstream content findings should be qualified rather than scored as failures. */
+  qualifiesContentFindings: boolean;
+  explanation: string;
 };
 
 export type AssessmentStatus =
@@ -210,6 +262,9 @@ export type AssessmentReport = {
   disclaimer: typeof disclaimer;
   evidenceQuality: EvidenceQuality;
   crawlMetadata: CrawlMetadata;
+  /** Coverage rolled up across every category plus the indexability group. */
+  coverage: CoverageSummary;
+  indexability: IndexabilitySummary;
   createdAt: string;
 };
 
@@ -286,6 +341,12 @@ export type ExtractedSignals = {
     localBusinessSchemaFound: boolean;
     iconLinkFound: boolean;
     schemaTypes: string[];
+    /** B3 indexability signals, captured per crawled page. */
+    requestedUrl: string;
+    redirectedFrom: string | null;
+    canonicalUrl: string | null;
+    metaRobotsNoindex: boolean;
+    headerNoindex: boolean;
   }>;
   phoneNumbers: string[];
   clickToCallLinks: string[];
@@ -313,8 +374,13 @@ export type ExtractedSignals = {
   brokenImages: BrokenAsset[];
   https: boolean;
   faviconFound: boolean;
+  /** Tri-state probe result behind `faviconFound` — see CheckStatus. A network
+   * failure/timeout on the probe is "could_not_assess", never collapsed into
+   * "not_found" the way the pre-2026-09-26 favicon/sitemap bug did. */
+  faviconCheckStatus: "found" | "not_found" | "could_not_assess";
   openGraphImageFound: boolean;
   sitemapFound: boolean;
+  sitemapCheckStatus: "found" | "not_found" | "could_not_assess";
   securityHeaders: string[];
 };
 
