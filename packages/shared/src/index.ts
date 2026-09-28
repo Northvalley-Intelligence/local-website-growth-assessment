@@ -43,6 +43,46 @@ export const scoringCategoryLabels: Record<ScoringCategory, string> = {
 export const disclaimer =
   "This is an automated public website assessment, not a legal, SEO, accessibility, or security compliance certification.";
 
+/**
+ * Hosts (lower-cased, `www.`/`m.` stripped) that count as the business's own
+ * review/social/directory profile when a crawled page links out to them.
+ * `google.com` is special-cased in `isOwnProfileLink` — only a `/maps` path
+ * counts, since the bare host also matches unrelated Google Search links.
+ */
+export const PROFILE_LINK_HOSTS: ReadonlySet<string> = new Set([
+  "facebook.com",
+  "yelp.com",
+  "bbb.org",
+  "instagram.com",
+  "linkedin.com",
+  "nextdoor.com",
+  "google.com",
+  "g.page",
+  "maps.app.goo.gl"
+]);
+
+/**
+ * True when `link` points at the business's own review/social profile (a
+ * Facebook, Yelp, BBB, Instagram, LinkedIn, Nextdoor, or Google Maps/Business
+ * page) per `PROFILE_LINK_HOSTS`. Malformed or relative URLs return false
+ * rather than throwing.
+ */
+export function isOwnProfileLink(link: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    return false;
+  }
+  let host = url.hostname.toLowerCase();
+  if (host.startsWith("www.")) host = host.slice(4);
+  if (host.startsWith("m.")) host = host.slice(2);
+  if (host === "google.com") {
+    return /^\/maps(\/|$)/.test(url.pathname);
+  }
+  return PROFILE_LINK_HOSTS.has(host);
+}
+
 const privateIpv4Ranges = [
   /^10\./,
   /^127\./,
@@ -266,6 +306,19 @@ export type AssessmentReport = {
   coverage: CoverageSummary;
   indexability: IndexabilitySummary;
   createdAt: string;
+  /** Structured contact facts (handoff 11 part B, coordinator review
+   * 2026-09-28), added so a downstream consumer (NAP consistency) reads a
+   * real field instead of parsing a factor's human-readable evidence text. */
+  contact: ContactSummary;
+};
+
+/** Structured contact facts extracted from the crawled pages. */
+export type ContactSummary = {
+  /** Every distinct phone-like string found on the crawled pages - visible
+   * page text plus `tel:` link hrefs (prefix stripped) - deduplicated. Same
+   * list `ExtractedSignals.phoneNumbers` already carries; just exposed here
+   * on the persisted report too. */
+  phoneNumbers: string[];
 };
 
 export type EvidenceQuality = {
@@ -393,6 +446,14 @@ export type ExtractedSignals = {
   sitemapFound: boolean;
   sitemapCheckStatus: "found" | "not_found" | "could_not_assess";
   securityHeaders: string[];
+  /** Links on the crawled pages that point at the business's own review/social
+   * profiles (see `isOwnProfileLink`/`PROFILE_LINK_HOSTS`). */
+  ownProfileLinks: string[];
+  /** Tri-state result behind `ownProfileLinks` — see CheckStatus. No crawled
+   * pages (a failed crawl) is "could_not_assess", never collapsed into
+   * "not_found": an empty crawl proves nothing about whether a profile link
+   * exists on pages we never read. */
+  ownProfileLinksCheckStatus: "found" | "not_found" | "could_not_assess";
 };
 
 export type BrokenAsset = {

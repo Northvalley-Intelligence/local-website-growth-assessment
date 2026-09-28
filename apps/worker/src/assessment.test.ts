@@ -1675,3 +1675,118 @@ describe("indexability basics before content findings (B3)", () => {
     expect(trustSignals.evidenceMissing).toContain("Testimonials were not found.");
   });
 });
+
+describe("links to your own review/social profiles (handoff 11 part A)", () => {
+  it("passes when a crawled page links to the business's own Facebook profile", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>
+        <h1>Acme Plumbing serving North Georgia</h1>
+        <a href="https://www.facebook.com/AcmePlumbing">Follow us on Facebook</a>
+        <p>${"Plumbing repair and installation services for homeowners across North Georgia. ".repeat(14)}</p>
+      </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-28T12:00:00.000Z") }
+    );
+    const trustSignals = report.categories.find(
+      (category) => category.category === "trustSignals"
+    )!;
+    const profileLinksFactor = trustSignals.factors.find(
+      (factor) => factor.check === "Links to your own review/social profiles"
+    )!;
+
+    expect(profileLinksFactor.status).toBe("observed");
+    expect(profileLinksFactor.passed).toBe(true);
+    expect(profileLinksFactor.evidenceDetails).toContain(
+      "https://www.facebook.com/AcmePlumbing"
+    );
+  });
+
+  it("is not_observed, scoped to the pages crawled, when no profile links are found", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>
+        <h1>Acme Plumbing serving North Georgia</h1>
+        <p>${"Plumbing repair and installation services for homeowners across North Georgia. ".repeat(14)}</p>
+      </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-28T12:00:00.000Z") }
+    );
+    const trustSignals = report.categories.find(
+      (category) => category.category === "trustSignals"
+    )!;
+    const profileLinksFactor = trustSignals.factors.find(
+      (factor) => factor.check === "Links to your own review/social profiles"
+    )!;
+    const pagesCrawled = report.crawlMetadata.pagesCrawled;
+
+    expect(profileLinksFactor.status).toBe("not_observed");
+    expect(profileLinksFactor.passed).toBe(false);
+    expect(profileLinksFactor.evidence).toBe(
+      `We did not find a link to your Facebook, Yelp or BBB profile on the ${pagesCrawled} page${
+        pagesCrawled === 1 ? "" : "s"
+      } we crawled.`
+    );
+    // Amendment 3: never claim the business has no profile, only that none
+    // was found on the pages this assessment crawled.
+    expect(profileLinksFactor.evidence).not.toMatch(/does not have|has no/i);
+  });
+
+  it("is could_not_assess, never a failure, when the crawl produced zero pages", async () => {
+    const signals = await extractSignals(
+      new URL("https://example.com/"),
+      [],
+      (async () => {
+        throw new Error("no network calls expected");
+      }) as FetchAdapter,
+      {}
+    );
+
+    expect(signals.ownProfileLinksCheckStatus).toBe("could_not_assess");
+    expect(signals.ownProfileLinks).toEqual([]);
+  });
+});
+
+describe("report.contact.phoneNumbers (coordinator review 2026-09-28, handoff 11 part B)", () => {
+  it("carries the deduplicated visible-text + tel: phone numbers, same list as ExtractedSignals.phoneNumbers", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>
+        <h1>Acme Plumbing serving North Georgia</h1>
+        <p>Call us at 470-524-2882 for a free estimate.</p>
+        <a href="tel:4705242882">Call now</a>
+        <p>${"Plumbing repair and installation services for homeowners across North Georgia. ".repeat(14)}</p>
+      </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-28T12:00:00.000Z") }
+    );
+
+    expect(report.contact.phoneNumbers).toContain("470-524-2882");
+    // The tel: link (4705242882, no punctuation) is a separate string from
+    // the visible-text one (470-524-2882) - both survive, deduplicated
+    // against themselves, never fabricated into one canonical form.
+    expect(report.contact.phoneNumbers).toContain("4705242882");
+  });
+
+  it("is an empty array, never undefined, when no phone number was found anywhere", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>
+        <h1>Acme Plumbing serving North Georgia</h1>
+        <p>${"Plumbing repair and installation services for homeowners across North Georgia. ".repeat(14)}</p>
+      </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-28T12:00:00.000Z") }
+    );
+
+    expect(report.contact.phoneNumbers).toEqual([]);
+  });
+});

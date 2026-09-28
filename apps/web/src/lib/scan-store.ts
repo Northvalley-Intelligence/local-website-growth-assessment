@@ -352,6 +352,7 @@ function normalizeReport(report: AssessmentReport): AssessmentReport {
       explanation:
         "This older locally stored report was created before indexability checks were added."
     },
+    contact: report.contact ?? { phoneNumbers: [] },
     categories
   };
 }

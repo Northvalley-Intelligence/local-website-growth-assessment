@@ -83,7 +83,8 @@ function report(index: number): AssessmentReport {
       qualifiesContentFindings: false,
       explanation: "Fixture report; indexability was not exercised."
     },
-    createdAt: new Date(2026, 5, 5, 12, 0, index).toISOString()
+    createdAt: new Date(2026, 5, 5, 12, 0, index).toISOString(),
+    contact: { phoneNumbers: [] }
   };
 }
 
