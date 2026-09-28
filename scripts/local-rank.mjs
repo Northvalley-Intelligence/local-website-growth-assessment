@@ -87,8 +87,8 @@ export const NOT_IN_TOP_60 = "not in top 60";
 export const NOT_SHOWING = "not showing"; // client.status: no rank AND no own profile found
 export const NOT_SHOWING_LABEL = "NOT SHOWING"; // table rank-cell label whenever client.position is null
 
-const GEOCODE_HOST = "https://maps.googleapis.com/maps/api/geocode/json";
-const PLACES_HOST = "https://places.googleapis.com/v1";
+export const GEOCODE_HOST = "https://maps.googleapis.com/maps/api/geocode/json";
+export const PLACES_HOST = "https://places.googleapis.com/v1";
 const DEFAULT_RADIUS_KM = 15;
 const DEFAULT_TOP = 5; // number of competitors shown/compared against (H05; was 3)
 const SEARCH_PAGE_SIZE = 20;
@@ -130,15 +130,22 @@ export const PLACE_FIELDS = [
   "googleMapsUri",
   "editorialSummary",
   "pureServiceAreaBusiness",
-  "location",
-  // contact field — may bill Place Details at a higher SKU; one call per
-  // run, client only (handoff 11 part B: carries the client's own profile
-  // phone for the NAP phone-consistency check).
-  "nationalPhoneNumber"
+  "location"
 ];
 
 export const SEARCH_FIELD_MASK = PLACE_FIELDS.map((f) => `places.${f}`).join(",");
 export const DETAILS_FIELD_MASK = PLACE_FIELDS.join(",");
+
+// NAP consistency (handoff 11 part B, coordinator review 2026-09-28): kept
+// OUT of PLACE_FIELDS/SEARCH_FIELD_MASK/DETAILS_FIELD_MASK on purpose -
+// nationalPhoneNumber is a contact field that may bill at a higher Places
+// API SKU, and PLACE_FIELDS feeds EVERY search + details call for EVERY
+// business (client + every completed competitor), not just the client's.
+// Requested ONLY via one dedicated Place Details call for the client's own
+// place, ONLY when --assessment is given - never per term, never for a
+// competitor. See `fetchNapDetails`.
+export const NAP_DETAILS_FIELD_MASK =
+  "nationalPhoneNumber,pureServiceAreaBusiness,formattedAddress,displayName";
 
 const TABLE_HEADER =
   "| Rank | Business | Rating | Reviews | Photos | Primary category | Hours listed | Website | SAB |";
@@ -549,13 +556,12 @@ export function extractOwnProfile(place, center) {
 // --------------------------------------------------------------------------
 
 /**
- * The raw Places fields NAP needs from a completed place object -
- * `nationalPhoneNumber`, `formattedAddress`, `displayName`,
- * `pureServiceAreaBusiness`. Works on either a ranked result already
- * completed via `completeResult` (the client's own row when it ranks), or
- * the raw place behind a dedicated own-profile lookup (`lookupOwnProfile`) -
- * both are "the client's own profile already fetched there" per the handoff.
- * Null when there is no place (never fabricated).
+ * The four NAP fields (`nationalPhoneNumber`, `formattedAddress`,
+ * `displayName`, `pureServiceAreaBusiness`) out of a Place Details response -
+ * specifically the ONE dedicated `fetchNapDetails` call keyed on
+ * `NAP_DETAILS_FIELD_MASK`, not a ranked/search result (those never carry
+ * `nationalPhoneNumber` - it deliberately is not in `PLACE_FIELDS`, see that
+ * constant's comment). Null when there is no place (never fabricated).
  */
 export function extractNapProfile(place) {
   if (!place) return null;
@@ -598,21 +604,31 @@ function examplesFromEvidence(evidenceText) {
  * Every distinct phone-like string the scanner reported as appearing on the
  * client's OWN website, read from the persisted assessment (report) JSON.
  *
- * IMPORTANT (handoff 11 report-back finding): the report JSON does NOT carry
- * a raw `phoneNumbers` array anywhere - `ExtractedSignals` (which does have
- * one) is never serialized into `AssessmentReport`; only its `categories[].
- * factors[]` survive. The only place site phone numbers still appear in the
- * saved JSON is the `evidence` text of two existing factors, in the exact
- * "<base> Examples found: <a>, <b>." shape `foundWithExamples()` builds
- * (apps/worker/src/index.ts): localVisibility's "Visible phone number" (raw
- * visible text, matched by the scanner's own phone regex) and leadConversion's
- * "Click-to-call link" (tel: hrefs - the "tel:" prefix is stripped here).
- * Both lists are capped at 6 examples by the scanner itself, so a site with
- * more than 6 distinct phone numbers loses the extras; acceptable for a
- * consistency check whose job is "does ANY published number match the
- * profile", not an exhaustive inventory.
+ * PRIMARY SOURCE: `assessment.contact.phoneNumbers` - a structured field
+ * (coordinator review 2026-09-28) added to `AssessmentReport` in
+ * `packages/shared/src/index.ts` / populated in `apps/worker/src/index.ts`
+ * from the scanner's own deduplicated `ExtractedSignals.phoneNumbers`
+ * (visible page text + `tel:` links, prefix stripped) - exactly what this
+ * function used to have to reconstruct.
+ *
+ * FALLBACK (older scan JSONs saved before `contact` existed): the original
+ * handoff-11 approach - parse the `evidence` text of two existing factors, in
+ * the exact "<base> Examples found: <a>, <b>." shape `foundWithExamples()`
+ * builds (apps/worker/src/index.ts): localVisibility's "Visible phone
+ * number" (raw visible text) and leadConversion's "Click-to-call link" (tel:
+ * hrefs, "tel:" prefix stripped here). Both lists are capped at 6 examples by
+ * the scanner itself, so an OLD report with more than 6 distinct phone
+ * numbers loses the extras via this path only - `contact.phoneNumbers` has
+ * no such cap.
  */
 export function sitePhoneNumbers(assessment) {
+  const contactNumbers = assessment && assessment.contact && assessment.contact.phoneNumbers;
+  if (Array.isArray(contactNumbers)) {
+    return [...new Set(contactNumbers.filter((n) => typeof n === "string" && n))];
+  }
+
+  // Fallback: no `contact` field (an older scan JSON) - reconstruct from
+  // factor evidence text instead.
   const numbers = new Set();
   for (const category of (assessment && assessment.categories) || []) {
     for (const factor of category.factors || []) {
@@ -1507,6 +1523,17 @@ function printDryRun(opts, terms, envState) {
     `   body: ${JSON.stringify(ownProfileSearchBody(resolveBusinessName(opts.name, opts.domain), opts.place, opts.sab))}`,
     ""
   );
+  if (opts.assessment) {
+    lines.push(
+      "5) ONE dedicated Place Details call for the client's OWN place ONLY (never a competitor), made only" +
+        " because --assessment was given AND a client place ID became known above (nationalPhoneNumber is a" +
+        " contact field, billed at a higher SKU - kept off every search/details call above and requested only" +
+        " here, once):",
+      `   GET ${PLACES_HOST}/places/{id}`,
+      `   headers: X-Goog-Api-Key: <REDACTED>, X-Goog-FieldMask: ${NAP_DETAILS_FIELD_MASK}`,
+      ""
+    );
+  }
   process.stdout.write(lines.join("\n"));
 }
 
@@ -1607,13 +1634,12 @@ async function searchOwnProfileText(name, place, apiKey, includeSab = true) {
 /**
  * ONE extra Places Text Search to find the business's own profile directly,
  * used only for a term whose searched depth does not contain the business.
- * Never fabricates a match: `{ ownProfile: null, napProfile: null }` when the
- * dedicated search finds nothing. Uses the same includeSab body as the main
- * search (a hidden-address pure service-area business's own profile needs it
- * too). Returns `napProfile` (see `extractNapProfile`) alongside the existing
- * `ownProfile` shape so a NAP-consistency check made from this SAME lookup
- * never needs a second API call (handoff 11 part B: "the client's own
- * profile is already fetched there").
+ * Never fabricates a match: null when the dedicated search finds nothing.
+ * Uses the same includeSab body as the main search (a hidden-address pure
+ * service-area business's own profile needs it too). Its `placeId` (see
+ * `extractOwnProfile`) is what a NAP lookup keys its own, separate, one-call
+ * Place Details request on (see `fetchNapDetails`) - this search's own field
+ * mask (`SEARCH_FIELD_MASK`) never carries `nationalPhoneNumber`.
  */
 async function lookupOwnProfile({ domain, name, place, apiKey, center, includeSab = true }) {
   const resolvedName = resolveBusinessName(name, domain);
@@ -1622,12 +1648,128 @@ async function lookupOwnProfile({ domain, name, place, apiKey, center, includeSa
   );
   const rawResults = await searchOwnProfileText(resolvedName, place, apiKey, includeSab);
   const idx = matchOwnProfile(rawResults, domain, name || resolvedName);
-  if (idx === null) return { ownProfile: null, napProfile: null };
+  if (idx === null) return null;
   const complete = await completeResult(rawResults[idx], apiKey);
-  return {
-    ownProfile: extractOwnProfile(complete, center),
-    napProfile: extractNapProfile(complete)
-  };
+  return extractOwnProfile(complete, center);
+}
+
+/**
+ * The ONE dedicated Place Details call for the client's OWN place, requested
+ * ONLY with `NAP_DETAILS_FIELD_MASK` (never `PLACE_FIELDS`/`DETAILS_FIELD_MASK`
+ * - see that constant's comment) - made only when `--assessment` is given AND
+ * a client place ID is already known (from the ranked results or the
+ * existing own-profile lookup), never per term, never for a competitor.
+ */
+async function fetchNapDetails(placeId, apiKey) {
+  const res = await getJson(`${PLACES_HOST}/places/${placeId}`, {
+    "X-Goog-Api-Key": apiKey,
+    "X-Goog-FieldMask": NAP_DETAILS_FIELD_MASK
+  });
+  if (!res.ok) fail(describeApiError(res.status, res.json), 2);
+  return res.json;
+}
+
+/**
+ * The full live pull: geocode once, then for each term run the existing
+ * Places search/details/own-profile flow. Separated out of `main` (rather
+ * than inlined) so tests can stub `globalThis.fetch` and call this directly
+ * to assert real call counts and field masks - `main` itself parses argv,
+ * calls `process.exit`, and writes files, none of which a unit test wants.
+ *
+ * NAP (handoff 11 part B) is computed here, AFTER every term, from exactly
+ * ONE dedicated Place Details call for the client's own place - ONLY when
+ * `assessment` is given AND a client place ID became known during the term
+ * loop (ranked result or the existing own-profile lookup). No `assessment`
+ * -> no extra call at all; `assessment` given but the client was never found
+ * by any term -> still no extra call (there is nothing to look up), and NAP
+ * falls through to `napConsistency(null, assessment)` (could_not_assess).
+ */
+export async function pullResults({ opts, apiKey, terms, assessment }) {
+  const center = await geocode(opts.place, apiKey);
+
+  const sections = [];
+  const jsonTerms = [];
+  // The client's own PLACE ID only (never nationalPhoneNumber - neither
+  // `results[idx]` nor `ownProfile` ever carries it; see PLACE_FIELDS'
+  // comment) - captured once, from whichever term first resolves it.
+  let clientPlaceId = null;
+  for (const term of terms) {
+    const rawResults = await searchText(term, center, opts.radiusKm, apiKey, opts.depth, opts.sab);
+    const idx = matchBusiness(rawResults, opts.domain, opts.name);
+    const completeIndexes = new Set(rawResults.slice(0, opts.top).map((_, i) => i));
+    if (idx !== null) completeIndexes.add(idx);
+    const results = await Promise.all(
+      rawResults.map((r, i) => (completeIndexes.has(i) ? completeResult(r, apiKey) : r))
+    );
+
+    if (idx !== null && !clientPlaceId) {
+      clientPlaceId = (results[idx] && results[idx].id) ?? null;
+    }
+
+    // One extra API call per unranked term only - never when the business already ranks.
+    const ownProfile =
+      idx === null
+        ? await lookupOwnProfile({
+            domain: opts.domain,
+            name: opts.name,
+            place: opts.place,
+            apiKey,
+            center,
+            includeSab: opts.sab
+          })
+        : null;
+    if (!clientPlaceId && ownProfile && ownProfile.found) {
+      clientPlaceId = ownProfile.placeId ?? null;
+    }
+
+    const { rank, searched, section, recommendations, client, competitors, topCompetitor } = buildTermOutput({
+      term,
+      place: opts.place,
+      results,
+      domain: opts.domain,
+      name: opts.name,
+      top: opts.top,
+      ownProfile,
+      center
+    });
+    sections.push(section);
+    // Every JSON result row carries an explicit placeId (mirrors the raw `id`
+    // field Places returns) and pureServiceAreaBusiness (from the field
+    // mask) so a consumer never has to know the API's internal field name.
+    const jsonResults = results.map((r) => ({
+      ...r,
+      placeId: (r && r.id) ?? null,
+      pureServiceAreaBusiness:
+        r && typeof r.pureServiceAreaBusiness === "boolean" ? r.pureServiceAreaBusiness : null
+    }));
+    jsonTerms.push({
+      term,
+      rank,
+      searched,
+      client,
+      competitors,
+      topCompetitor,
+      recommendations,
+      ownProfile,
+      results: jsonResults
+    });
+  }
+
+  // NAP consistency (handoff 11 part B) - only when --assessment was given.
+  // Exactly ONE dedicated NAP Place Details call, here, ONLY here, ONLY when
+  // a client place ID is known - never per term, never for a competitor.
+  let nap = null;
+  if (assessment) {
+    const clientNapProfile = clientPlaceId
+      ? extractNapProfile(await fetchNapDetails(clientPlaceId, apiKey))
+      : null;
+    const napResult = napConsistency(clientNapProfile, assessment);
+    nap = { phone: napResult.phone, name: napResult.name, address: napResult.address };
+    const napSection = renderNapSection(napResult);
+    if (napSection) sections.push(napSection);
+  }
+
+  return { center, sections, jsonTerms, nap };
 }
 
 // --------------------------------------------------------------------------
@@ -1710,86 +1852,7 @@ async function main() {
   }
 
   const apiKey = envState.resolved.GOOGLE_MAPS_API_KEY;
-  const center = await geocode(opts.place, apiKey);
-
-  const sections = [];
-  const jsonTerms = [];
-  // The client's own profile, for NAP only - captured once, from whichever
-  // term first resolves it (ranked or found via the own-profile lookup);
-  // every term shares the same business, so this reuses an already-fetched
-  // place rather than making another API call (handoff 11 part B).
-  let clientNapProfile = null;
-  for (const term of terms) {
-    const rawResults = await searchText(term, center, opts.radiusKm, apiKey, opts.depth, opts.sab);
-    const idx = matchBusiness(rawResults, opts.domain, opts.name);
-    const completeIndexes = new Set(rawResults.slice(0, opts.top).map((_, i) => i));
-    if (idx !== null) completeIndexes.add(idx);
-    const results = await Promise.all(
-      rawResults.map((r, i) => (completeIndexes.has(i) ? completeResult(r, apiKey) : r))
-    );
-
-    if (idx !== null && !clientNapProfile) {
-      clientNapProfile = extractNapProfile(results[idx]);
-    }
-
-    // One extra API call per unranked term only - never when the business already ranks.
-    const ownProfileLookup =
-      idx === null
-        ? await lookupOwnProfile({
-            domain: opts.domain,
-            name: opts.name,
-            place: opts.place,
-            apiKey,
-            center,
-            includeSab: opts.sab
-          })
-        : { ownProfile: null, napProfile: null };
-    const ownProfile = ownProfileLookup.ownProfile;
-    if (!clientNapProfile && ownProfileLookup.napProfile) {
-      clientNapProfile = ownProfileLookup.napProfile;
-    }
-
-    const { rank, searched, section, recommendations, client, competitors, topCompetitor } = buildTermOutput({
-      term,
-      place: opts.place,
-      results,
-      domain: opts.domain,
-      name: opts.name,
-      top: opts.top,
-      ownProfile,
-      center
-    });
-    sections.push(section);
-    // Every JSON result row carries an explicit placeId (mirrors the raw `id`
-    // field Places returns) and pureServiceAreaBusiness (from the field
-    // mask) so a consumer never has to know the API's internal field name.
-    const jsonResults = results.map((r) => ({
-      ...r,
-      placeId: (r && r.id) ?? null,
-      pureServiceAreaBusiness:
-        r && typeof r.pureServiceAreaBusiness === "boolean" ? r.pureServiceAreaBusiness : null
-    }));
-    jsonTerms.push({
-      term,
-      rank,
-      searched,
-      client,
-      competitors,
-      topCompetitor,
-      recommendations,
-      ownProfile,
-      results: jsonResults
-    });
-  }
-
-  // NAP consistency (handoff 11 part B) - only when --assessment was given.
-  let nap = null;
-  if (assessment) {
-    const napResult = napConsistency(clientNapProfile, assessment);
-    nap = { phone: napResult.phone, name: napResult.name, address: napResult.address };
-    const napSection = renderNapSection(napResult);
-    if (napSection) sections.push(napSection);
-  }
+  const { center, sections, jsonTerms, nap } = await pullResults({ opts, apiKey, terms, assessment });
 
   const markdown = renderMarkdown({ sections });
   writeFileSync(opts.out, markdown, "utf8");

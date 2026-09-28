@@ -1750,3 +1750,43 @@ describe("links to your own review/social profiles (handoff 11 part A)", () => {
     expect(signals.ownProfileLinks).toEqual([]);
   });
 });
+
+describe("report.contact.phoneNumbers (coordinator review 2026-09-28, handoff 11 part B)", () => {
+  it("carries the deduplicated visible-text + tel: phone numbers, same list as ExtractedSignals.phoneNumbers", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>
+        <h1>Acme Plumbing serving North Georgia</h1>
+        <p>Call us at 470-524-2882 for a free estimate.</p>
+        <a href="tel:4705242882">Call now</a>
+        <p>${"Plumbing repair and installation services for homeowners across North Georgia. ".repeat(14)}</p>
+      </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-28T12:00:00.000Z") }
+    );
+
+    expect(report.contact.phoneNumbers).toContain("470-524-2882");
+    // The tel: link (4705242882, no punctuation) is a separate string from
+    // the visible-text one (470-524-2882) - both survive, deduplicated
+    // against themselves, never fabricated into one canonical form.
+    expect(report.contact.phoneNumbers).toContain("4705242882");
+  });
+
+  it("is an empty array, never undefined, when no phone number was found anywhere", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>
+        <h1>Acme Plumbing serving North Georgia</h1>
+        <p>${"Plumbing repair and installation services for homeowners across North Georgia. ".repeat(14)}</p>
+      </body></html>`
+    });
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      { fetchAdapter, crawlDelayMs: 0, now: () => new Date("2026-09-28T12:00:00.000Z") }
+    );
+
+    expect(report.contact.phoneNumbers).toEqual([]);
+  });
+});

@@ -306,6 +306,19 @@ export type AssessmentReport = {
   coverage: CoverageSummary;
   indexability: IndexabilitySummary;
   createdAt: string;
+  /** Structured contact facts (handoff 11 part B, coordinator review
+   * 2026-09-28), added so a downstream consumer (NAP consistency) reads a
+   * real field instead of parsing a factor's human-readable evidence text. */
+  contact: ContactSummary;
+};
+
+/** Structured contact facts extracted from the crawled pages. */
+export type ContactSummary = {
+  /** Every distinct phone-like string found on the crawled pages - visible
+   * page text plus `tel:` link hrefs (prefix stripped) - deduplicated. Same
+   * list `ExtractedSignals.phoneNumbers` already carries; just exposed here
+   * on the persisted report too. */
+  phoneNumbers: string[];
 };
 
 export type EvidenceQuality = {

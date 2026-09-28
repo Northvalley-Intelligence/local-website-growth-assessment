@@ -8,13 +8,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DETAILS_FIELD_MASK,
+  GEOCODE_HOST,
   GOOGLE_GUIDANCE_BLOCK,
   GOOGLE_GUIDANCE_URL,
   LOCAL_RANK_STORE_SCHEMA,
   NA,
+  NAP_DETAILS_FIELD_MASK,
   NOT_IN_TOP_60,
   NOT_SHOWING,
   NOT_SHOWING_LABEL,
+  PLACES_HOST,
   SEARCH_FIELD_MASK,
   addressComponentsMatch,
   buildClientRow,
@@ -54,6 +57,7 @@ import {
   renderTermSection,
   resolveBusinessName,
   searchTextBody,
+  pullResults,
   selectCompetitors,
   siteBusinessName,
   sitePhoneNumbers,
@@ -1432,11 +1436,18 @@ describe("field masks", () => {
       "places.googleMapsUri",
       "places.editorialSummary",
       "places.pureServiceAreaBusiness",
-      "places.location",
-      "places.nationalPhoneNumber"
+      "places.location"
     ]) {
       expect(SEARCH_FIELD_MASK.split(",")).toContain(field);
     }
+  });
+
+  it("NEVER requests nationalPhoneNumber on a search/details call (coordinator review 2026-09-28 - cost)", () => {
+    expect(SEARCH_FIELD_MASK).not.toContain("nationalPhoneNumber");
+    expect(DETAILS_FIELD_MASK).not.toContain("nationalPhoneNumber");
+    expect(NAP_DETAILS_FIELD_MASK).toBe(
+      "nationalPhoneNumber,pureServiceAreaBusiness,formattedAddress,displayName"
+    );
   });
 });
 
@@ -1830,7 +1841,15 @@ describe("toStore", () => {
  * same shape). `sitePhones: []` produces the "not found" evidence text
  * (no "Examples found:" segment), matching a real not-passed factor.
  */
-function makeAssessment({ sitePhones = [], siteTelLinks = [] } = {}) {
+/**
+ * A minimal assessment (scanner report) JSON. By default (matching a
+ * present-day real report) it carries BOTH the structured
+ * `contact.phoneNumbers` field (coordinator review 2026-09-28) AND the two
+ * legacy factors' evidence text, since a live report always has both.
+ * `legacy: true` omits `contact` entirely, to exercise `sitePhoneNumbers`'
+ * evidence-text FALLBACK path for an older saved scan JSON.
+ */
+function makeAssessment({ sitePhones = [], siteTelLinks = [], legacy = false } = {}) {
   const phoneEvidence =
     sitePhones.length > 0
       ? `A phone number is visible. Examples found: ${sitePhones.join(", ")}.`
@@ -1839,22 +1858,23 @@ function makeAssessment({ sitePhones = [], siteTelLinks = [] } = {}) {
     siteTelLinks.length > 0
       ? `Click-to-call link was found. Examples found: ${siteTelLinks.join(", ")}.`
       : "Click-to-call link was not found.";
-  return {
+  const assessment = {
     categories: [
       {
         category: "localVisibility",
-        factors: [
-          { check: "Visible phone number", evidence: phoneEvidence }
-        ]
+        factors: [{ check: "Visible phone number", evidence: phoneEvidence }]
       },
       {
         category: "leadConversion",
-        factors: [
-          { check: "Click-to-call link", evidence: telEvidence }
-        ]
+        factors: [{ check: "Click-to-call link", evidence: telEvidence }]
       }
     ]
   };
+  if (!legacy) {
+    const strippedTel = siteTelLinks.map((t) => t.replace(/^tel:/i, ""));
+    assessment.contact = { phoneNumbers: [...new Set([...sitePhones, ...strippedTel])] };
+  }
+  return assessment;
 }
 
 describe("extractNapProfile", () => {
@@ -1909,24 +1929,53 @@ describe("normalizePhoneDigits", () => {
   });
 });
 
-describe("sitePhoneNumbers", () => {
-  it("reads visible-phone-text examples from the localVisibility factor", () => {
-    const assessment = makeAssessment({ sitePhones: ["470-524-2882", "(470) 524-2883"] });
+describe("sitePhoneNumbers - PRIMARY path: assessment.contact.phoneNumbers (coordinator review 2026-09-28)", () => {
+  it("reads directly from the structured contact.phoneNumbers field", () => {
+    const assessment = { contact: { phoneNumbers: ["470-524-2882", "(470) 524-2883"] } };
     expect(sitePhoneNumbers(assessment)).toEqual(["470-524-2882", "(470) 524-2883"]);
   });
 
-  it("reads tel: link examples from the leadConversion factor, stripping the tel: prefix", () => {
-    const assessment = makeAssessment({ siteTelLinks: ["tel:4705242882"] });
+  it("dedupes and drops non-string entries defensively", () => {
+    const assessment = { contact: { phoneNumbers: ["470-524-2882", "470-524-2882", null, 123] } };
+    expect(sitePhoneNumbers(assessment)).toEqual(["470-524-2882"]);
+  });
+
+  it("is empty when contact.phoneNumbers is an empty array (a real report where none was found)", () => {
+    expect(sitePhoneNumbers({ contact: { phoneNumbers: [] }, categories: [] })).toEqual([]);
+  });
+
+  it("takes contact.phoneNumbers over the evidence text when the two disagree (primary wins)", () => {
+    const assessment = makeAssessment({ sitePhones: ["555-000-1111"] });
+    // Overwrite contact with a DIFFERENT number than the evidence text carries,
+    // to prove which source actually wins.
+    assessment.contact = { phoneNumbers: ["999-999-9999"] };
+    expect(sitePhoneNumbers(assessment)).toEqual(["999-999-9999"]);
+  });
+});
+
+describe("sitePhoneNumbers - FALLBACK path: evidence text (older scan JSONs without contact)", () => {
+  it("reads visible-phone-text examples from the localVisibility factor when contact is absent", () => {
+    const assessment = makeAssessment({ sitePhones: ["470-524-2882", "(470) 524-2883"], legacy: true });
+    expect(assessment.contact).toBeUndefined();
+    expect(sitePhoneNumbers(assessment)).toEqual(["470-524-2882", "(470) 524-2883"]);
+  });
+
+  it("reads tel: link examples from the leadConversion factor, stripping the tel: prefix, when contact is absent", () => {
+    const assessment = makeAssessment({ siteTelLinks: ["tel:4705242882"], legacy: true });
     expect(sitePhoneNumbers(assessment)).toEqual(["4705242882"]);
   });
 
-  it("is empty when neither factor found a phone", () => {
-    expect(sitePhoneNumbers(makeAssessment())).toEqual([]);
+  it("is empty when neither factor found a phone and contact is absent", () => {
+    expect(sitePhoneNumbers(makeAssessment({ legacy: true }))).toEqual([]);
   });
+});
 
+describe("sitePhoneNumbers - malformed input", () => {
   it("is empty for a null/malformed assessment (never throws)", () => {
     expect(sitePhoneNumbers(null)).toEqual([]);
     expect(sitePhoneNumbers({})).toEqual([]);
+    expect(sitePhoneNumbers({ contact: {} })).toEqual([]);
+    expect(sitePhoneNumbers({ contact: { phoneNumbers: "not-an-array" } })).toEqual([]);
   });
 });
 
@@ -2102,6 +2151,229 @@ describe("toStore - nap (handoff 11 part B)", () => {
     // No digit from either phone number (or anything else) survives into the
     // nap block - it holds only the three state words.
     expect(JSON.stringify(store.nap)).not.toMatch(/\d/);
+  });
+});
+
+// --------------------------------------------------------------------------
+// pullResults with a stubbed fetch (coordinator review 2026-09-28: cost)
+//
+// Asserts real network call COUNTS and FIELD MASKS, not just the pure
+// functions above - the whole point of the review's two changes is that
+// nationalPhoneNumber must never ride along on a search/details call, and
+// must be requested via exactly ONE dedicated Details call, only when
+// --assessment is given and only when a client place ID is known.
+// --------------------------------------------------------------------------
+
+/** A JSON-body-returning fetch Response stand-in - just enough of the shape `postJson`/`getJson` read. */
+function jsonResponse(body) {
+  return {
+    ok: true,
+    status: 200,
+    async text() {
+      return JSON.stringify(body ?? {});
+    }
+  };
+}
+
+/**
+ * Routes a stubbed `globalThis.fetch` to the same three endpoints `main()`
+ * actually calls, recording every call (url, method, headers, parsed body)
+ * so tests can assert on them directly. `searchPlaces` answers the per-term
+ * Text Search (has `locationBias`); `ownProfilePlaces` answers the dedicated
+ * own-profile Text Search (no `locationBias` - see `ownProfileSearchBody`);
+ * `napDetailsPlace` answers ANY GET to `/places/{id}` (both a regular
+ * `completeResult` Details call and the dedicated NAP Details call use this
+ * same URL shape - tests below build fixtures with every `needsDetails`
+ * tracked field already present so `completeResult` never actually fires
+ * one, keeping the GET-to-`/places/` count attributable to NAP alone).
+ */
+function makeApiFetchMock({ searchPlaces = [], ownProfilePlaces = [], napDetailsPlace = {} } = {}) {
+  const calls = [];
+  const fetchMock = vi.fn(async (url, init) => {
+    const method = init?.method ?? "GET";
+    const headers = (init && init.headers) || {};
+    const body = init && init.body ? JSON.parse(init.body) : null;
+    calls.push({ url, method, headers, body });
+
+    if (url.startsWith(GEOCODE_HOST)) {
+      return jsonResponse({
+        status: "OK",
+        results: [{ geometry: { location: { lat: 33.95, lng: -84.55 } } }]
+      });
+    }
+    if (url === `${PLACES_HOST}/places:searchText`) {
+      const isOwnProfileQuery = !body || !body.locationBias;
+      return jsonResponse({ places: isOwnProfileQuery ? ownProfilePlaces : searchPlaces });
+    }
+    if (url.startsWith(`${PLACES_HOST}/places/`)) {
+      return jsonResponse(napDetailsPlace);
+    }
+    throw new Error(`Unexpected fetch call in test: ${method} ${url}`);
+  });
+  return { fetchMock, calls };
+}
+
+function detailsGetCalls(calls) {
+  return calls.filter((c) => c.method === "GET" && c.url.startsWith(`${PLACES_HOST}/places/`));
+}
+
+function searchTextCalls(calls) {
+  return calls.filter((c) => c.url === `${PLACES_HOST}/places:searchText`);
+}
+
+const napOpts = {
+  domain: "feltonandpeel.com",
+  name: "Felton & Peel",
+  place: "Marietta, GA",
+  radiusKm: 15,
+  top: 5,
+  depth: 60,
+  sab: true
+};
+
+describe("pullResults - NAP Details call count/field mask (coordinator review 2026-09-28)", () => {
+  it("--assessment given, client ranks: exactly ONE Details call, using NAP_DETAILS_FIELD_MASK; search calls never carry nationalPhoneNumber", async () => {
+    const searchPlaces = [
+      makePlace({ id: "place-top", name: "Top Realty", website: "https://top.example.com", rating: 4.9, reviews: 200, category: "Real estate agency", hours: true, photos: 3 }),
+      makePlace({ id: "place-client", name: "Felton & Peel", website: "https://feltonandpeel.com", rating: 4.6, reviews: 19, category: "Real estate agency", hours: true, photos: 2 })
+    ];
+    const { fetchMock, calls } = makeApiFetchMock({
+      searchPlaces,
+      napDetailsPlace: {
+        displayName: { text: "Felton & Peel" },
+        nationalPhoneNumber: "(470) 524-2882",
+        formattedAddress: "123 Main St, Marietta, GA 30060",
+        pureServiceAreaBusiness: false
+      }
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const assessment = makeAssessment({ sitePhones: ["470-524-2882"] });
+      const result = await pullResults({
+        opts: napOpts,
+        apiKey: "test-key",
+        terms: ["realtor near me"],
+        assessment
+      });
+
+      expect(result.nap).toEqual({ phone: "observed", name: "could_not_assess", address: "could_not_assess" });
+
+      const details = detailsGetCalls(calls);
+      expect(details).toHaveLength(1);
+      expect(details[0].url).toBe(`${PLACES_HOST}/places/place-client`);
+      expect(details[0].headers["X-Goog-FieldMask"]).toBe(NAP_DETAILS_FIELD_MASK);
+
+      for (const call of searchTextCalls(calls)) {
+        expect(call.headers["X-Goog-FieldMask"]).not.toContain("nationalPhoneNumber");
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("no --assessment: zero Details calls at all, even though the client ranks", async () => {
+    const searchPlaces = [
+      makePlace({ id: "place-client", name: "Felton & Peel", website: "https://feltonandpeel.com", rating: 4.6, reviews: 19, category: "Real estate agency", hours: true, photos: 2 })
+    ];
+    const { fetchMock, calls } = makeApiFetchMock({ searchPlaces });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const result = await pullResults({
+        opts: napOpts,
+        apiKey: "test-key",
+        terms: ["realtor near me"],
+        assessment: null
+      });
+
+      expect(result.nap).toBeNull();
+      expect(detailsGetCalls(calls)).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("--assessment given but the client is never found (not ranked, no own profile): zero Details calls, nap is could_not_assess", async () => {
+    const searchPlaces = [
+      makePlace({ id: "place-other", name: "Other Realty", website: "https://other.example.com", rating: 4.2, reviews: 10, category: "Real estate agency", hours: true, photos: 1 })
+    ];
+    const { fetchMock, calls } = makeApiFetchMock({ searchPlaces, ownProfilePlaces: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const assessment = makeAssessment({ sitePhones: ["470-524-2882"] });
+      const result = await pullResults({
+        opts: napOpts,
+        apiKey: "test-key",
+        terms: ["realtor near me"],
+        assessment
+      });
+
+      expect(result.nap).toEqual({
+        phone: "could_not_assess",
+        name: "could_not_assess",
+        address: "could_not_assess"
+      });
+      expect(detailsGetCalls(calls)).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("client found only via the own-profile lookup (not ranked): still exactly ONE Details call, keyed on the own-profile placeId", async () => {
+    const searchPlaces = [
+      makePlace({ id: "place-other", name: "Other Realty", website: "https://other.example.com", rating: 4.2, reviews: 10, category: "Real estate agency", hours: true, photos: 1 })
+    ];
+    const ownProfilePlaces = [
+      makePlace({ id: "place-client-own", name: "Felton & Peel", website: "https://feltonandpeel.com", rating: 4.6, reviews: 19, category: "Real estate agency", hours: true, photos: 2 })
+    ];
+    const { fetchMock, calls } = makeApiFetchMock({
+      searchPlaces,
+      ownProfilePlaces,
+      napDetailsPlace: { nationalPhoneNumber: "470-524-2882" }
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const assessment = makeAssessment({ sitePhones: ["470-524-2882"] });
+      const result = await pullResults({
+        opts: napOpts,
+        apiKey: "test-key",
+        terms: ["realtor near me"],
+        assessment
+      });
+
+      const details = detailsGetCalls(calls);
+      expect(details).toHaveLength(1);
+      expect(details[0].url).toBe(`${PLACES_HOST}/places/place-client-own`);
+      expect(details[0].headers["X-Goog-FieldMask"]).toBe(NAP_DETAILS_FIELD_MASK);
+      expect(result.nap.phone).toBe("observed");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("two terms, both ranking the client, --assessment given: still exactly ONE Details call (not one per term)", async () => {
+    const searchPlaces = [
+      makePlace({ id: "place-client", name: "Felton & Peel", website: "https://feltonandpeel.com", rating: 4.6, reviews: 19, category: "Real estate agency", hours: true, photos: 2 })
+    ];
+    const { fetchMock, calls } = makeApiFetchMock({
+      searchPlaces,
+      napDetailsPlace: { nationalPhoneNumber: "470-524-2882" }
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const assessment = makeAssessment({ sitePhones: ["470-524-2882"] });
+      const result = await pullResults({
+        opts: napOpts,
+        apiKey: "test-key",
+        terms: ["realtor near me", "real estate agent near me"],
+        assessment
+      });
+
+      expect(detailsGetCalls(calls)).toHaveLength(1);
+      expect(searchTextCalls(calls)).toHaveLength(2);
+      expect(result.nap.phone).toBe("observed");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

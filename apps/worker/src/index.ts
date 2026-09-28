@@ -196,7 +196,12 @@ export async function assessWebsite(
     crawlMetadata,
     coverage,
     indexability,
-    createdAt
+    createdAt,
+    // Handoff 11 part B (coordinator review 2026-09-28): the same
+    // deduplicated visible-text + tel:-link phone list ExtractedSignals
+    // already computes, now exposed on the persisted report too so a
+    // downstream consumer never has to parse a factor's evidence string.
+    contact: { phoneNumbers: signals.phoneNumbers }
   };
 
   emitAssessmentEvent(options.eventSink, {
