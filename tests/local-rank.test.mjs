@@ -1,9 +1,16 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
   DETAILS_FIELD_MASK,
   GOOGLE_GUIDANCE_BLOCK,
   GOOGLE_GUIDANCE_URL,
+  LOCAL_RANK_STORE_SCHEMA,
   NA,
   NOT_IN_TOP_60,
   NOT_SHOWING,
@@ -25,6 +32,7 @@ import {
   haversineMiles,
   hostFromUrl,
   kmToMeters,
+  loadStore,
   matchBusiness,
   matchOwnProfile,
   needsDetails,
@@ -43,8 +51,11 @@ import {
   searchTextBody,
   selectCompetitors,
   termServiceCategory,
+  toStore,
   topCompetitorFor
 } from "../scripts/local-rank.mjs";
+
+const SCRIPT_PATH = fileURLToPath(new globalThis.URL("../scripts/local-rank.mjs", import.meta.url));
 
 /** Build a Places API v1 result object, omitting a key entirely when its input is absent
  * (matching how Google's API omits rather than nulls a field it has nothing for). */
@@ -1566,5 +1577,387 @@ describe("ownProfileFirstLine", () => {
     expect(line).toBe(
       `Your profile exists (rating ${NA}, ${NA} reviews, ${NA} photos, category ${NA}) but does not rank for "ai consultant near me" from Marietta, GA.`
     );
+  });
+});
+
+// ----------------------------------------------------------------------------
+// toStore / loadStore (H10: keep place IDs + our own findings, never raw
+// Places data - Ferosh 2026-09-28)
+// ----------------------------------------------------------------------------
+
+/** Recursively collect every object key in `node` (arrays descended into, values not returned). */
+function collectKeys(node, keys = []) {
+  if (Array.isArray(node)) {
+    for (const item of node) collectKeys(item, keys);
+  } else if (node && typeof node === "object") {
+    for (const [key, value] of Object.entries(node)) {
+      keys.push(key);
+      collectKeys(value, keys);
+    }
+  }
+  return keys;
+}
+
+// The raw-Places / computed-profile fields the store must never carry, at any
+// nesting level. "name" is checked separately below - the ONE allowed hit is
+// the top-level business name field the handoff schema itself asks for.
+const FORBIDDEN_STORE_KEYS = new Set([
+  "displayName",
+  "rating",
+  "userRatingCount",
+  "formattedAddress",
+  "reviewCount",
+  "photos",
+  "websiteUri",
+  "name",
+  "photoCount",
+  "photoCapped",
+  "primaryCategory",
+  "hoursListed",
+  "website",
+  "pureServiceAreaBusiness",
+  "hasDescription",
+  "servicesCount",
+  "distanceMi",
+  "center",
+  "results",
+  "topCompetitor",
+  "ownProfile"
+]);
+
+describe("toStore", () => {
+  // Term A: business ranks 2nd of 3 - exercises the "ranked" client-placeId path.
+  const termAResults = [
+    makePlace({ id: "place-top", name: "Top Realty", rating: 4.9, reviews: 200, category: "Real estate agency", hours: true, photos: 10 }),
+    makePlace({ id: "place-client", name: "Felton & Peel", website: "https://feltonandpeel.com", rating: 4.6, reviews: 19, category: "Real estate agency", hours: false, photos: 4 }),
+    makePlace({ id: "place-third", name: "Third Realty", rating: 4.5, reviews: 80, category: "Real estate agency", hours: true, photos: 6 })
+  ];
+  const termAOut = buildTermOutput({
+    term: "realtor near me",
+    place: "Marietta, GA",
+    results: termAResults,
+    domain: "feltonandpeel.com",
+    top: 2
+  });
+
+  // Term B: business absent from results, no own profile found - "not showing" path (placeId null).
+  const termBResults = [
+    makePlace({ id: "place-b1", name: "Advisor One", rating: 4.7, reviews: 50, category: "Financial advisor", hours: true, photos: 8 }),
+    makePlace({ id: "place-b2", name: "Advisor Two", rating: 4.2, reviews: 30, category: "Financial advisor", hours: true, photos: 3 })
+  ];
+  const termBOut = buildTermOutput({
+    term: "financial advisor near me",
+    place: "Marietta, GA",
+    results: termBResults,
+    domain: "feltonandpeel.com",
+    top: 2,
+    ownProfile: null
+  });
+
+  // Term C: business not ranked, but its own profile WAS found via the extra lookup -
+  // exercises the ownProfile.placeId client-placeId path.
+  const termCResults = [
+    makePlace({ id: "place-c1", name: "Wealth One", rating: 4.8, reviews: 90, category: "Financial planner", hours: true, photos: 12 }),
+    makePlace({ id: "place-c2", name: "Wealth Two", rating: 4.3, reviews: 40, category: "Financial planner", hours: true, photos: 5 })
+  ];
+  const ownProfileRaw = makePlace({
+    id: "place-client-own",
+    name: "Felton & Peel",
+    rating: 4.6,
+    reviews: 19,
+    category: "Financial planner",
+    hours: false,
+    photos: 4
+  });
+  const termCOwnProfile = extractOwnProfile(ownProfileRaw, null);
+  const termCOut = buildTermOutput({
+    term: "wealth manager near me",
+    place: "Marietta, GA",
+    results: termCResults,
+    domain: "feltonandpeel.com",
+    top: 2,
+    ownProfile: termCOwnProfile
+  });
+
+  /** Mirrors main()'s jsonResults transform: adds an explicit placeId (from the raw `id`). */
+  function withPlaceIds(results) {
+    return results.map((r) => ({
+      ...r,
+      placeId: (r && r.id) ?? null,
+      pureServiceAreaBusiness: r && typeof r.pureServiceAreaBusiness === "boolean" ? r.pureServiceAreaBusiness : null
+    }));
+  }
+
+  // jsonTerms shape, as main() assembles it (term/rank/searched/client/competitors/
+  // topCompetitor/recommendations/ownProfile/results-with-placeId).
+  const termsForStore = [
+    {
+      term: "realtor near me",
+      rank: termAOut.rank,
+      searched: termAOut.searched,
+      client: termAOut.client,
+      competitors: termAOut.competitors,
+      topCompetitor: termAOut.topCompetitor,
+      recommendations: termAOut.recommendations,
+      ownProfile: null,
+      results: withPlaceIds(termAResults)
+    },
+    {
+      term: "financial advisor near me",
+      rank: termBOut.rank,
+      searched: termBOut.searched,
+      client: termBOut.client,
+      competitors: termBOut.competitors,
+      topCompetitor: termBOut.topCompetitor,
+      recommendations: termBOut.recommendations,
+      ownProfile: null,
+      results: withPlaceIds(termBResults)
+    },
+    {
+      term: "wealth manager near me",
+      rank: termCOut.rank,
+      searched: termCOut.searched,
+      client: termCOut.client,
+      competitors: termCOut.competitors,
+      topCompetitor: termCOut.topCompetitor,
+      recommendations: termCOut.recommendations,
+      ownProfile: termCOwnProfile,
+      results: withPlaceIds(termCResults)
+    }
+  ];
+
+  const fullResult = {
+    domain: "feltonandpeel.com",
+    name: "Felton & Peel",
+    place: "Marietta, GA",
+    center: { latitude: 33.95, longitude: -84.55 },
+    radiusKm: 15,
+    top: 2,
+    depth: 60,
+    terms: termsForStore
+  };
+
+  it("carries the documented top-level fields, schema tag, and pulledAt", () => {
+    const store = toStore(fullResult, { pulledAt: "2026-09-28T12:00:00.000Z" });
+    expect(store.schema).toBe(LOCAL_RANK_STORE_SCHEMA);
+    expect(store.schema).toBe("local-rank-store/1");
+    expect(store.domain).toBe("feltonandpeel.com");
+    expect(store.name).toBe("Felton & Peel");
+    expect(store.place).toBe("Marietta, GA");
+    expect(store.radiusKm).toBe(15);
+    expect(store.top).toBe(2);
+    expect(store.depth).toBe(60);
+    expect(store.pulledAt).toBe("2026-09-28T12:00:00.000Z");
+    expect(store.terms).toHaveLength(3);
+  });
+
+  it("defaults pulledAt to the current time (ISO) when not given", () => {
+    const before = Date.now();
+    const store = toStore(fullResult);
+    const parsed = Date.parse(store.pulledAt);
+    expect(Number.isNaN(parsed)).toBe(false);
+    expect(parsed).toBeGreaterThanOrEqual(before);
+  });
+
+  it("term A (ranked): resolves the client placeId by position, keeps competitor positions + placeIds + categoryMatch", () => {
+    const store = toStore(fullResult, { pulledAt: "2026-09-28T12:00:00.000Z" });
+    const termA = store.terms[0];
+    expect(termA.term).toBe("realtor near me");
+    expect(termA.rank).toBe(2);
+    expect(termA.searched).toBe(3);
+    expect(termA.client).toEqual({ position: 2, status: null, placeId: "place-client" });
+    expect(termA.competitors).toEqual([
+      { position: 1, placeId: "place-top", categoryMatch: true },
+      { position: 3, placeId: "place-third", categoryMatch: true }
+    ]);
+    expect(termA.recommendations.length).toBeGreaterThan(0);
+  });
+
+  it("term B (not showing): client placeId is null, status is NOT_SHOWING", () => {
+    const store = toStore(fullResult, { pulledAt: "2026-09-28T12:00:00.000Z" });
+    const termB = store.terms[1];
+    expect(termB.client).toEqual({ position: null, status: NOT_SHOWING, placeId: null });
+    expect(termB.competitors.map((c) => c.placeId)).toEqual(["place-b1", "place-b2"]);
+  });
+
+  it("term C (own profile found, not ranked): client placeId comes from ownProfile, status null", () => {
+    const store = toStore(fullResult, { pulledAt: "2026-09-28T12:00:00.000Z" });
+    const termC = store.terms[2];
+    expect(termC.client).toEqual({ position: null, status: null, placeId: "place-client-own" });
+  });
+
+  it("drops every forbidden raw-Places/computed-profile key, at any depth, except the one allowed top-level business name", () => {
+    const store = toStore(fullResult, { pulledAt: "2026-09-28T12:00:00.000Z" });
+    const rest = { ...store };
+    delete rest.name; // the one allowed hit, checked separately below
+    const keys = collectKeys(rest);
+    const hits = keys.filter((k) => FORBIDDEN_STORE_KEYS.has(k));
+    expect(hits).toEqual([]);
+    // And the ONE allowed hit really is there, at the top level only.
+    expect(store.name).toBe("Felton & Peel");
+  });
+
+  it("never emits center, results, topCompetitor, or ownProfile", () => {
+    const store = toStore(fullResult, { pulledAt: "2026-09-28T12:00:00.000Z" });
+    expect(store).not.toHaveProperty("center");
+    for (const term of store.terms) {
+      expect(term).not.toHaveProperty("results");
+      expect(term).not.toHaveProperty("topCompetitor");
+      expect(term).not.toHaveProperty("ownProfile");
+    }
+  });
+});
+
+describe("loadStore", () => {
+  it("round-trips a toStore()-shaped file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "local-rank-loadstore-"));
+    try {
+      const storePath = join(dir, "store.json");
+      const store = {
+        schema: LOCAL_RANK_STORE_SCHEMA,
+        domain: "feltonandpeel.com",
+        name: "Felton & Peel",
+        place: "Marietta, GA",
+        radiusKm: 15,
+        top: 5,
+        depth: 60,
+        pulledAt: "2026-09-28T12:00:00.000Z",
+        terms: [
+          {
+            term: "realtor near me",
+            rank: 7,
+            searched: 8,
+            client: { position: 7, status: null, placeId: "place-client" },
+            competitors: [{ position: 1, placeId: "place-top", categoryMatch: true }],
+            recommendations: ["Your listing is #7 of 8 results..."]
+          }
+        ]
+      };
+      writeFileSync(storePath, JSON.stringify(store, null, 2));
+      expect(loadStore(storePath)).toEqual(store);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("throws on a missing file, invalid JSON, wrong schema, or missing required fields", () => {
+    const dir = mkdtempSync(join(tmpdir(), "local-rank-loadstore-bad-"));
+    try {
+      expect(() => loadStore(join(dir, "nope.json"))).toThrow();
+
+      const badJsonPath = join(dir, "bad.json");
+      writeFileSync(badJsonPath, "{ not json");
+      expect(() => loadStore(badJsonPath)).toThrow(/not valid JSON/);
+
+      const wrongSchemaPath = join(dir, "wrong-schema.json");
+      writeFileSync(wrongSchemaPath, JSON.stringify({ schema: "something-else", domain: "d", place: "p", terms: [{ term: "t" }] }));
+      expect(() => loadStore(wrongSchemaPath)).toThrow(/schema/);
+
+      const missingFieldsPath = join(dir, "missing-fields.json");
+      writeFileSync(missingFieldsPath, JSON.stringify({ schema: LOCAL_RANK_STORE_SCHEMA }));
+      expect(() => loadStore(missingFieldsPath)).toThrow(/domain\/place\/terms/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("parseArgs --store / --from-store", () => {
+  it("parses --store", () => {
+    const opts = parseArgs([
+      "--domain", "d", "--terms", "t", "--place", "p", "--out", "o.md", "--store", "o.store.json"
+    ]);
+    expect(opts.store).toBe("o.store.json");
+  });
+
+  it("parses --from-store and does NOT require --domain/--terms/--place", () => {
+    const opts = parseArgs(["--from-store", "store.json", "--out", "o.md"]);
+    expect(opts.fromStore).toBe("store.json");
+    expect(opts.domain).toBeNull();
+    expect(opts.terms).toBeNull();
+    expect(opts.place).toBeNull();
+  });
+
+  it("--from-store still requires --out", () => {
+    expect(() => parseArgs(["--from-store", "store.json"])).toThrow(/--out/);
+  });
+
+  it("plain (non-from-store) usage still requires --domain/--terms/--place", () => {
+    expect(() => parseArgs(["--out", "o.md"])).toThrow(/--domain/);
+  });
+});
+
+describe("CLI --from-store --dry-run (no network; reads domain/terms/place from the store file)", () => {
+  it("prints the planned pull sourced from the store file and exits 0, writing nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "local-rank-cli-fromstore-"));
+    try {
+      const storePath = join(dir, "feltonandpeel.com.local-rank.store.json");
+      const store = {
+        schema: LOCAL_RANK_STORE_SCHEMA,
+        domain: "feltonandpeel.com",
+        name: "Felton & Peel",
+        place: "Marietta, GA",
+        radiusKm: 15,
+        top: 5,
+        depth: 60,
+        pulledAt: "2026-09-14T00:00:00.000Z",
+        terms: [
+          {
+            term: "realtor near me",
+            rank: 7,
+            searched: 8,
+            client: { position: 7, status: null, placeId: "place-client" },
+            competitors: [{ position: 1, placeId: "place-top", categoryMatch: true }],
+            recommendations: ['Your listing is #7 of 8 results for "realtor near me" from Marietta, GA.']
+          }
+        ]
+      };
+      writeFileSync(storePath, JSON.stringify(store, null, 2));
+
+      const outPath = join(dir, "out.md");
+      // --env points at a nonexistent file so loadEnv never touches this checkout's
+      // real .env.local; the fake key below is a dummy value only (dry-run never
+      // reads it back or sends it anywhere - no network call is made at all).
+      const stdout = execFileSync(
+        process.execPath,
+        [SCRIPT_PATH, "--from-store", storePath, "--out", outPath, "--env", join(dir, "no-such-env"), "--dry-run"],
+        {
+          encoding: "utf8",
+          cwd: dir,
+          env: { ...process.env, GOOGLE_MAPS_API_KEY: "test-dry-run-key-not-real" }
+        }
+      );
+
+      expect(stdout).toContain("Dry run — no network calls will be made.");
+      expect(stdout).toContain("feltonandpeel.com");
+      expect(stdout).toContain("(name fallback: Felton & Peel)");
+      expect(stdout).toContain("realtor near me");
+      expect(stdout).toContain("Marietta, GA");
+      expect(stdout).toContain(`From store: ${storePath}`);
+      expect(existsSync(outPath)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("exits non-zero on a --from-store file with the wrong schema, without making any network call", () => {
+    const dir = mkdtempSync(join(tmpdir(), "local-rank-cli-fromstore-bad-"));
+    try {
+      const storePath = join(dir, "bad.json");
+      writeFileSync(storePath, JSON.stringify({ schema: "not-the-right-schema" }));
+      expect(() =>
+        execFileSync(
+          process.execPath,
+          [SCRIPT_PATH, "--from-store", storePath, "--out", join(dir, "out.md"), "--dry-run"],
+          {
+            encoding: "utf8",
+            cwd: dir,
+            env: { ...process.env, GOOGLE_MAPS_API_KEY: "test-dry-run-key-not-real" }
+          }
+        )
+      ).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

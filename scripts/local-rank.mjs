@@ -58,10 +58,24 @@
 // Usage:
 //   node scripts/local-rank.mjs --domain <domain> --terms "<term>;<term>" \
 //     --place "<City, GA | zip>" --out <path.md> \
-//     [--json <path>] [--env <path>] [--name <business name>] \
+//     [--json <path>] [--store <path>] [--env <path>] [--name <business name>] \
 //     [--radius-km 15] [--top 5] [--depth 60] [--dry-run]
 //
-// Exit codes: 0 ok · 1 bad input / missing env · 2 Google API failure.
+// --store <path> ALSO writes a reduced "local-rank-store/1" JSON file (see
+// `toStore`) alongside --out/--json: place IDs + our own computed findings
+// (rank/status/recommendations) only - never the raw Places payload (names,
+// ratings, review counts, addresses, hours, photos, URLs). That store file is
+// what a report build keeps long-term; the full --json stays a scratch
+// artifact of one pull.
+//
+// --from-store <path> re-pulls a LIVE run using domain/name/place/terms/
+// radiusKm/top/depth read back out of a store file (overriding any of those
+// given directly on the CLI) - --out/--json/--store/--env/--dry-run are still
+// taken from the CLI as normal. This is how a report rebuild gets fresh
+// Places data without the store file itself ever holding raw Places fields.
+//
+// Exit codes: 0 ok · 1 bad input / missing env / bad --from-store file ·
+// 2 Google API failure.
 // ---------------------------------------------------------------------------
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -931,6 +945,109 @@ export function buildTermOutput({ term, place, results, domain, name, top, ownPr
   };
 }
 
+// --------------------------------------------------------------------------
+// Store (place IDs + our own findings only - never raw Places data)
+// --------------------------------------------------------------------------
+
+export const LOCAL_RANK_STORE_SCHEMA = "local-rank-store/1";
+
+/**
+ * The place ID for a 1-based `results[]` position (as `client.position` /
+ * `competitors[].position` carry it) - null for a null/out-of-range
+ * position. Looks at `placeId` first (the field `main()` adds to every
+ * result before writing --json) and falls back to the raw Places `id` (a
+ * caller that hasn't gone through that step, e.g. a direct `buildTermOutput`
+ * result in a test).
+ */
+function placeIdAtPosition(results, position) {
+  if (position === null || position === undefined) return null;
+  const r = (results ?? [])[position - 1];
+  if (!r) return null;
+  return r.placeId ?? r.id ?? null;
+}
+
+/**
+ * Reduce one full local-rank result (the shape written to --json: domain,
+ * name, place, center, radiusKm, top, depth, terms[] each carrying the raw
+ * Places `results[]`) down to what is safe and useful to keep long-term:
+ * place IDs + our own computed findings. Decision (Ferosh, 2026-09-28):
+ * "keep place_ids and our own findings, re-pull fresh when needed" - raw
+ * Places payload fields (names, ratings, review counts, addresses, hours,
+ * photos, URLs) are NEVER carried into the store. `center`, `results`,
+ * `topCompetitor` and `ownProfile` are dropped outright; a place ID is
+ * resolved by position from `results[]` (client from `client.position`, or
+ * from `ownProfile.placeId` when the business was found only via the
+ * own-profile lookup; each competitor from its own `position`) - never
+ * re-derived by name/category matching, so this stays a pure lookup.
+ */
+export function toStore(result, { pulledAt } = {}) {
+  const terms = (result.terms ?? []).map((t) => {
+    const results = t.results ?? [];
+    const client = t.client ?? { position: null, status: null };
+    const clientPlaceId =
+      client.position !== null
+        ? placeIdAtPosition(results, client.position)
+        : t.ownProfile && t.ownProfile.found
+          ? (t.ownProfile.placeId ?? null)
+          : null;
+    return {
+      term: t.term,
+      rank: t.rank ?? null,
+      searched: t.searched ?? null,
+      client: {
+        position: client.position ?? null,
+        status: client.status ?? null,
+        placeId: clientPlaceId
+      },
+      competitors: (t.competitors ?? []).map((c) => ({
+        position: c.position,
+        placeId: placeIdAtPosition(results, c.position),
+        categoryMatch: c.categoryMatch
+      })),
+      recommendations: t.recommendations ?? []
+    };
+  });
+
+  return {
+    schema: LOCAL_RANK_STORE_SCHEMA,
+    domain: result.domain,
+    name: result.name ?? null,
+    place: result.place,
+    radiusKm: result.radiusKm,
+    top: result.top,
+    depth: result.depth,
+    pulledAt: pulledAt ?? new Date().toISOString(),
+    terms
+  };
+}
+
+/**
+ * Read + minimally validate a `local-rank-store/1` file for `--from-store`.
+ * Throws (never fabricates a default) when the file is missing, not JSON, or
+ * missing the fields a live re-pull needs.
+ */
+export function loadStore(path) {
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    throw new Error(`could not read ${path}: ${err.message}`);
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`${path} is not valid JSON: ${err.message}`);
+  }
+  if (!data || data.schema !== LOCAL_RANK_STORE_SCHEMA) {
+    throw new Error(`${path}: expected "schema": "${LOCAL_RANK_STORE_SCHEMA}"`);
+  }
+  if (!data.domain || !data.place || !Array.isArray(data.terms) || !data.terms.length) {
+    throw new Error(`${path}: missing domain/place/terms`);
+  }
+  return data;
+}
+
 /** Google Ads-API-style error body -> one human message; never echoes request URLs/keys. */
 export function describeApiError(status, json) {
   const error = json && json.error ? json.error : null;
@@ -950,8 +1067,15 @@ const USAGE = [
   "Usage:",
   '  node scripts/local-rank.mjs --domain <domain> --terms "<term>;<term>" \\',
   '    --place "<City, GA | zip>" --out <path.md> \\',
-  "    [--json <path>] [--env <path>] [--name <business name>] \\",
+  "    [--json <path>] [--store <path>] [--env <path>] [--name <business name>] \\",
   "    [--radius-km 15] [--top 5] [--depth 20|40|60] [--dry-run] [--no-sab]",
+  "",
+  "  node scripts/local-rank.mjs --from-store <path> --out <path.md> [--json <path>] [--store <path>] [--dry-run]",
+  "",
+  "--store <path> also writes a reduced local-rank-store/1 JSON file (place IDs +",
+  "our own findings only - never raw Places data).",
+  "--from-store <path> re-pulls fresh, live results using domain/name/place/terms/",
+  "radiusKm/top/depth read back from that store file (overrides those flags/defaults).",
   "",
   "--no-sab turns OFF includePureServiceAreaBusinesses (default ON) - for an A/B",
   "re-run only; a hidden-address pure service-area business is excluded from",
@@ -970,6 +1094,8 @@ export function parseArgs(argv) {
     place: null,
     out: null,
     json: null,
+    store: null,
+    fromStore: null,
     env: ".env.local",
     radiusKm: DEFAULT_RADIUS_KM,
     top: DEFAULT_TOP,
@@ -984,6 +1110,8 @@ export function parseArgs(argv) {
     "--place": "place",
     "--out": "out",
     "--json": "json",
+    "--store": "store",
+    "--from-store": "fromStore",
     "--env": "env",
     "--radius-km": "radiusKm",
     "--top": "top",
@@ -1016,9 +1144,11 @@ export function parseArgs(argv) {
   }
 
   if (!opts.help) {
-    if (!opts.domain) throw new Error("--domain <domain> is required");
-    if (!opts.terms) throw new Error("--terms <term;term> is required");
-    if (!opts.place) throw new Error("--place <City, GA | zip> is required");
+    if (!opts.fromStore) {
+      if (!opts.domain) throw new Error("--domain <domain> is required");
+      if (!opts.terms) throw new Error("--terms <term;term> is required");
+      if (!opts.place) throw new Error("--place <City, GA | zip> is required");
+    }
     if (!opts.out) throw new Error("--out <path> is required");
     if (!opts.json) opts.json = `${opts.out}.json`;
     if (!Number.isFinite(opts.radiusKm) || opts.radiusKm <= 0) {
@@ -1068,6 +1198,8 @@ function printDryRun(opts, terms, envState) {
     `Env keys present (values NEVER shown): ${REQUIRED_ENV_KEYS.join(", ")}`,
     `Output:     ${opts.out}`,
     `Raw JSON:   ${opts.json}`,
+    ...(opts.store ? [`Store:      ${opts.store} (local-rank-store/1 - place IDs + our own findings only)`] : []),
+    ...(opts.fromStore ? [`From store: ${opts.fromStore}`] : []),
     "",
     "1) Geocode the area centre (key sent as a query param, never printed):",
     `   GET ${GEOCODE_HOST}?address=${encodeURIComponent(geocodeAddressParam(opts.place))}&key=<REDACTED>`,
@@ -1230,6 +1362,26 @@ async function main() {
     return;
   }
 
+  if (opts.fromStore) {
+    let store;
+    try {
+      store = loadStore(opts.fromStore);
+    } catch (err) {
+      fail(err.message, 1);
+      return;
+    }
+    // The store file is authoritative for what to (re-)pull - overrides any
+    // of these given directly on the CLI, so a rebuild always re-pulls
+    // exactly what was stored, never a mix of old + new inputs.
+    opts.domain = store.domain;
+    opts.name = store.name ?? null;
+    opts.place = store.place;
+    opts.terms = store.terms.map((t) => t.term).join(";");
+    opts.radiusKm = store.radiusKm;
+    opts.top = store.top;
+    opts.depth = store.depth;
+  }
+
   let terms;
   try {
     terms = parseTermList(opts.terms);
@@ -1320,29 +1472,27 @@ async function main() {
   const markdown = renderMarkdown({ sections });
   writeFileSync(opts.out, markdown, "utf8");
 
+  const fullResult = {
+    domain: opts.domain,
+    name: opts.name,
+    place: opts.place,
+    center,
+    radiusKm: opts.radiusKm,
+    top: opts.top,
+    depth: opts.depth,
+    terms: jsonTerms
+  };
+
   if (opts.json) {
-    writeFileSync(
-      opts.json,
-      `${JSON.stringify(
-        {
-          domain: opts.domain,
-          name: opts.name,
-          place: opts.place,
-          center,
-          radiusKm: opts.radiusKm,
-          top: opts.top,
-          depth: opts.depth,
-          terms: jsonTerms
-        },
-        null,
-        2
-      )}\n`,
-      "utf8"
-    );
+    writeFileSync(opts.json, `${JSON.stringify(fullResult, null, 2)}\n`, "utf8");
+  }
+
+  if (opts.store) {
+    writeFileSync(opts.store, `${JSON.stringify(toStore(fullResult), null, 2)}\n`, "utf8");
   }
 
   process.stdout.write(
-    `Wrote ${opts.out}${opts.json ? ` and ${opts.json}` : ""} (${terms.length} term(s)).\n`
+    `Wrote ${opts.out}${opts.json ? ` and ${opts.json}` : ""}${opts.store ? ` and ${opts.store}` : ""} (${terms.length} term(s)).\n`
   );
 }
 
