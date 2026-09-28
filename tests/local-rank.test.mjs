@@ -16,6 +16,7 @@ import {
   NOT_SHOWING,
   NOT_SHOWING_LABEL,
   SEARCH_FIELD_MASK,
+  addressComponentsMatch,
   buildClientRow,
   buildCompetitorSuggestions,
   buildRecommendations,
@@ -23,6 +24,7 @@ import {
   describeApiError,
   domainLabel,
   extractCompetitorData,
+  extractNapProfile,
   extractOwnProfile,
   extractPlaceData,
   fetchSearchPages,
@@ -35,10 +37,12 @@ import {
   loadStore,
   matchBusiness,
   matchOwnProfile,
+  napConsistency,
   needsDetails,
   nextPageBody,
   normalizeDomain,
   normalizeNameForMatch,
+  normalizePhoneDigits,
   ownProfileFirstLine,
   ownProfileSearchBody,
   pagesForDepth,
@@ -46,10 +50,14 @@ import {
   parseEnvFile,
   parseTermList,
   renderMarkdown,
+  renderNapSection,
   renderTermSection,
   resolveBusinessName,
   searchTextBody,
   selectCompetitors,
+  siteBusinessName,
+  sitePhoneNumbers,
+  siteStreetAddress,
   termServiceCategory,
   toStore,
   topCompetitorFor
@@ -1424,7 +1432,8 @@ describe("field masks", () => {
       "places.googleMapsUri",
       "places.editorialSummary",
       "places.pureServiceAreaBusiness",
-      "places.location"
+      "places.location",
+      "places.nationalPhoneNumber"
     ]) {
       expect(SEARCH_FIELD_MASK.split(",")).toContain(field);
     }
@@ -1808,6 +1817,294 @@ describe("toStore", () => {
   });
 });
 
+// --------------------------------------------------------------------------
+// NAP consistency (handoff 11 part B)
+// --------------------------------------------------------------------------
+
+/**
+ * A minimal assessment (scanner report) JSON, shaped exactly like the real
+ * `apps/worker/src/index.ts` output for the two factors NAP reads: the
+ * localVisibility "Visible phone number" check's `evidence` (raw visible
+ * text, `foundWithExamples("A phone number is visible.", ...)` shape) and
+ * the leadConversion "Click-to-call link" check's `evidence` (`tel:` hrefs,
+ * same shape). `sitePhones: []` produces the "not found" evidence text
+ * (no "Examples found:" segment), matching a real not-passed factor.
+ */
+function makeAssessment({ sitePhones = [], siteTelLinks = [] } = {}) {
+  const phoneEvidence =
+    sitePhones.length > 0
+      ? `A phone number is visible. Examples found: ${sitePhones.join(", ")}.`
+      : "Business phone number is hard to find.";
+  const telEvidence =
+    siteTelLinks.length > 0
+      ? `Click-to-call link was found. Examples found: ${siteTelLinks.join(", ")}.`
+      : "Click-to-call link was not found.";
+  return {
+    categories: [
+      {
+        category: "localVisibility",
+        factors: [
+          { check: "Visible phone number", evidence: phoneEvidence }
+        ]
+      },
+      {
+        category: "leadConversion",
+        factors: [
+          { check: "Click-to-call link", evidence: telEvidence }
+        ]
+      }
+    ]
+  };
+}
+
+describe("extractNapProfile", () => {
+  it("pulls name/phone/formattedAddress/pureServiceAreaBusiness from a raw place", () => {
+    const place = makePlace({
+      id: "place-1",
+      name: "Isaac's Landscaping",
+      rating: 4.5,
+      reviews: 20,
+      category: "Landscaper",
+      hours: true,
+      photos: 3,
+      sab: false
+    });
+    place.formattedAddress = "123 Main St, Marietta, GA 30060";
+    place.nationalPhoneNumber = "(262) 309-8346";
+
+    expect(extractNapProfile(place)).toEqual({
+      found: true,
+      name: "Isaac's Landscaping",
+      phone: "(262) 309-8346",
+      formattedAddress: "123 Main St, Marietta, GA 30060",
+      pureServiceAreaBusiness: false
+    });
+  });
+
+  it("is null for a null place, and null (not fabricated) for missing fields", () => {
+    expect(extractNapProfile(null)).toBeNull();
+    expect(extractNapProfile({})).toEqual({
+      found: true,
+      name: null,
+      phone: null,
+      formattedAddress: null,
+      pureServiceAreaBusiness: null
+    });
+  });
+});
+
+describe("normalizePhoneDigits", () => {
+  it("strips formatting so differently-punctuated equal numbers compare equal", () => {
+    expect(normalizePhoneDigits("(470) 524-2882")).toBe(normalizePhoneDigits("470-524-2882"));
+    expect(normalizePhoneDigits("470.524.2882")).toBe("4705242882");
+  });
+
+  it("strips a leading US country code 1 (amendment 4)", () => {
+    expect(normalizePhoneDigits("+1 (470) 524-2882")).toBe("4705242882");
+    expect(normalizePhoneDigits("1-470-524-2882")).toBe("4705242882");
+  });
+
+  it("does not falsely equate genuinely different numbers", () => {
+    expect(normalizePhoneDigits("(262) 309-8346")).not.toBe(normalizePhoneDigits("470-524-2882"));
+  });
+});
+
+describe("sitePhoneNumbers", () => {
+  it("reads visible-phone-text examples from the localVisibility factor", () => {
+    const assessment = makeAssessment({ sitePhones: ["470-524-2882", "(470) 524-2883"] });
+    expect(sitePhoneNumbers(assessment)).toEqual(["470-524-2882", "(470) 524-2883"]);
+  });
+
+  it("reads tel: link examples from the leadConversion factor, stripping the tel: prefix", () => {
+    const assessment = makeAssessment({ siteTelLinks: ["tel:4705242882"] });
+    expect(sitePhoneNumbers(assessment)).toEqual(["4705242882"]);
+  });
+
+  it("is empty when neither factor found a phone", () => {
+    expect(sitePhoneNumbers(makeAssessment())).toEqual([]);
+  });
+
+  it("is empty for a null/malformed assessment (never throws)", () => {
+    expect(sitePhoneNumbers(null)).toEqual([]);
+    expect(sitePhoneNumbers({})).toEqual([]);
+  });
+});
+
+describe("siteBusinessName / siteStreetAddress (not built - see handoff 11 report-back)", () => {
+  it("always return null: the assessment JSON exposes no parsed schema name or site address today", () => {
+    const assessment = makeAssessment({ sitePhones: ["470-524-2882"] });
+    expect(siteBusinessName(assessment)).toBeNull();
+    expect(siteStreetAddress(assessment)).toBeNull();
+  });
+});
+
+describe("addressComponentsMatch", () => {
+  it("matches on street number + ZIP regardless of other formatting", () => {
+    expect(
+      addressComponentsMatch(
+        "123 Main St, Marietta, GA 30060",
+        "123 Main Street, Marietta, Georgia 30060-1234"
+      )
+    ).toBe(true);
+  });
+
+  it("does not match a different street number or ZIP", () => {
+    expect(addressComponentsMatch("123 Main St, Marietta, GA 30060", "456 Main St, Marietta, GA 30060")).toBe(
+      false
+    );
+    expect(addressComponentsMatch("123 Main St, Marietta, GA 30060", "123 Main St, Marietta, GA 30062")).toBe(
+      false
+    );
+  });
+
+  it("is false when either side has no parseable ZIP/street number", () => {
+    expect(addressComponentsMatch("service area only, no public address", "123 Main St, Marietta, GA 30060")).toBe(
+      false
+    );
+  });
+});
+
+describe("napConsistency", () => {
+  it("Isaac case: profile phone (262) does not match the site's 470 number - not_observed", () => {
+    const ownProfile = extractNapProfile({
+      displayName: { text: "Isaac's Landscaping" },
+      nationalPhoneNumber: "(262) 309-8346",
+      pureServiceAreaBusiness: false
+    });
+    const assessment = makeAssessment({ sitePhones: ["470-524-2882"] });
+
+    const result = napConsistency(ownProfile, assessment);
+    expect(result.phone).toBe("not_observed");
+    expect(result.notes.join(" ")).toContain("does not match");
+  });
+
+  it("format-only phone difference compares equal - observed", () => {
+    const ownProfile = extractNapProfile({
+      nationalPhoneNumber: "(470) 524-2882"
+    });
+    const assessment = makeAssessment({ sitePhones: ["470-524-2882"] });
+
+    const result = napConsistency(ownProfile, assessment);
+    expect(result.phone).toBe("observed");
+  });
+
+  it("service-area business (SAB) - address is not_applicable, never a mismatch", () => {
+    const ownProfile = extractNapProfile({
+      nationalPhoneNumber: "470-524-2882",
+      formattedAddress: null,
+      pureServiceAreaBusiness: true
+    });
+    const assessment = makeAssessment({ sitePhones: ["470-524-2882"] });
+
+    const result = napConsistency(ownProfile, assessment);
+    expect(result.address).toBe("not_applicable");
+  });
+
+  it("a storefront profile with a hidden/absent address is also not_applicable (amendment 5)", () => {
+    const ownProfile = extractNapProfile({
+      nationalPhoneNumber: "470-524-2882",
+      pureServiceAreaBusiness: false
+      // formattedAddress omitted entirely - Places did not publish one.
+    });
+    const assessment = makeAssessment({ sitePhones: ["470-524-2882"] });
+
+    const result = napConsistency(ownProfile, assessment);
+    expect(result.address).toBe("not_applicable");
+  });
+
+  it("no own profile at all - every field is could_not_assess, never a fabricated defect", () => {
+    const result = napConsistency(null, makeAssessment({ sitePhones: ["470-524-2882"] }));
+    expect(result.phone).toBe("could_not_assess");
+    expect(result.name).toBe("could_not_assess");
+    expect(result.address).toBe("could_not_assess");
+  });
+
+  it("site publishes no phone at all - not_applicable, not a mismatch", () => {
+    const ownProfile = extractNapProfile({ nationalPhoneNumber: "470-524-2882" });
+    const result = napConsistency(ownProfile, makeAssessment());
+    expect(result.phone).toBe("not_applicable");
+  });
+
+  it("profile has no phone at all - could_not_assess", () => {
+    const ownProfile = extractNapProfile({ displayName: { text: "Acme" } });
+    const result = napConsistency(ownProfile, makeAssessment({ sitePhones: ["470-524-2882"] }));
+    expect(result.phone).toBe("could_not_assess");
+  });
+
+  it("name always falls to could_not_assess today (no site business name is exposed anywhere)", () => {
+    const ownProfile = extractNapProfile({ displayName: { text: "Isaac's Landscaping" } });
+    const result = napConsistency(ownProfile, makeAssessment({ sitePhones: ["470-524-2882"] }));
+    expect(result.name).toBe("could_not_assess");
+  });
+
+  it("produces one note per field", () => {
+    const ownProfile = extractNapProfile({ nationalPhoneNumber: "470-524-2882" });
+    const result = napConsistency(ownProfile, makeAssessment({ sitePhones: ["470-524-2882"] }));
+    expect(result.notes).toHaveLength(3);
+  });
+});
+
+describe("renderNapSection", () => {
+  it("is null when NAP was not computed", () => {
+    expect(renderNapSection(null)).toBeNull();
+  });
+
+  it("renders one markdown bullet per note, under a heading", () => {
+    const ownProfile = extractNapProfile({
+      displayName: { text: "Isaac's Landscaping" },
+      nationalPhoneNumber: "(262) 309-8346"
+    });
+    const result = napConsistency(ownProfile, makeAssessment({ sitePhones: ["470-524-2882"] }));
+    const section = renderNapSection(result);
+    expect(section).toContain("## Local Citation & Brand Consistency (NAP)");
+    for (const note of result.notes) {
+      expect(section).toContain(`- ${note}`);
+    }
+  });
+});
+
+describe("toStore - nap (handoff 11 part B)", () => {
+  const baseFullResult = {
+    domain: "feltonandpeel.com",
+    name: "Felton & Peel",
+    place: "Marietta, GA",
+    center: { latitude: 33.95, longitude: -84.55 },
+    radiusKm: 15,
+    top: 2,
+    depth: 60,
+    terms: []
+  };
+
+  it("omits nap entirely when the result carries none (no --assessment given)", () => {
+    const store = toStore(baseFullResult, { pulledAt: "2026-09-28T12:00:00.000Z" });
+    expect(store).not.toHaveProperty("nap");
+  });
+
+  it("keeps ONLY the three states - never notes, never a phone number or name digit", () => {
+    const ownProfile = extractNapProfile({
+      displayName: { text: "Isaac's Landscaping" },
+      nationalPhoneNumber: "(262) 309-8346",
+      formattedAddress: "123 Main St, Marietta, GA 30060"
+    });
+    const napResult = napConsistency(ownProfile, makeAssessment({ sitePhones: ["470-524-2882"] }));
+    const fullResult = {
+      ...baseFullResult,
+      nap: { phone: napResult.phone, name: napResult.name, address: napResult.address }
+    };
+
+    const store = toStore(fullResult, { pulledAt: "2026-09-28T12:00:00.000Z" });
+    expect(store.nap).toEqual({
+      phone: napResult.phone,
+      name: napResult.name,
+      address: napResult.address
+    });
+    expect(store.nap).not.toHaveProperty("notes");
+    // No digit from either phone number (or anything else) survives into the
+    // nap block - it holds only the three state words.
+    expect(JSON.stringify(store.nap)).not.toMatch(/\d/);
+  });
+});
+
 describe("loadStore", () => {
   it("round-trips a toStore()-shaped file", () => {
     const dir = mkdtempSync(join(tmpdir(), "local-rank-loadstore-"));
@@ -1935,6 +2232,128 @@ describe("CLI --from-store --dry-run (no network; reads domain/terms/place from 
       expect(stdout).toContain("Marietta, GA");
       expect(stdout).toContain(`From store: ${storePath}`);
       expect(existsSync(outPath)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts --assessment <scan.json> alongside --from-store --dry-run: exits 0, writes nothing, makes no network call (handoff 11 acceptance)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "local-rank-cli-assessment-"));
+    try {
+      const storePath = join(dir, "feltonandpeel.com.local-rank.store.json");
+      const store = {
+        schema: LOCAL_RANK_STORE_SCHEMA,
+        domain: "feltonandpeel.com",
+        name: "Felton & Peel",
+        place: "Marietta, GA",
+        radiusKm: 15,
+        top: 5,
+        depth: 60,
+        pulledAt: "2026-09-14T00:00:00.000Z",
+        terms: [
+          {
+            term: "realtor near me",
+            rank: 7,
+            searched: 8,
+            client: { position: 7, status: null, placeId: "place-client" },
+            competitors: [{ position: 1, placeId: "place-top", categoryMatch: true }],
+            recommendations: ['Your listing is #7 of 8 results for "realtor near me" from Marietta, GA.']
+          }
+        ]
+      };
+      writeFileSync(storePath, JSON.stringify(store, null, 2));
+
+      const assessmentPath = join(dir, "feltonandpeel.com.scan.json");
+      writeFileSync(
+        assessmentPath,
+        JSON.stringify({
+          categories: [
+            {
+              category: "localVisibility",
+              factors: [
+                {
+                  check: "Visible phone number",
+                  evidence: "A phone number is visible. Examples found: 470-524-2882."
+                }
+              ]
+            }
+          ]
+        })
+      );
+
+      const outPath = join(dir, "out.md");
+      const stdout = execFileSync(
+        process.execPath,
+        [
+          SCRIPT_PATH,
+          "--from-store", storePath,
+          "--assessment", assessmentPath,
+          "--out", outPath,
+          "--env", join(dir, "no-such-env"),
+          "--dry-run"
+        ],
+        {
+          encoding: "utf8",
+          cwd: dir,
+          env: { ...process.env, GOOGLE_MAPS_API_KEY: "test-dry-run-key-not-real" }
+        }
+      );
+
+      expect(stdout).toContain("Dry run — no network calls will be made.");
+      expect(stdout).toContain(`Assessment: ${assessmentPath}`);
+      expect(existsSync(outPath)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("exits non-zero on an unparseable --assessment file, before any network call", () => {
+    const dir = mkdtempSync(join(tmpdir(), "local-rank-cli-assessment-bad-"));
+    try {
+      const storePath = join(dir, "store.json");
+      writeFileSync(
+        storePath,
+        JSON.stringify({
+          schema: LOCAL_RANK_STORE_SCHEMA,
+          domain: "feltonandpeel.com",
+          name: "Felton & Peel",
+          place: "Marietta, GA",
+          radiusKm: 15,
+          top: 5,
+          depth: 60,
+          pulledAt: "2026-09-14T00:00:00.000Z",
+          terms: [
+            {
+              term: "realtor near me",
+              rank: null,
+              searched: 0,
+              client: { position: null, status: NOT_SHOWING, placeId: null },
+              competitors: [],
+              recommendations: []
+            }
+          ]
+        })
+      );
+      const assessmentPath = join(dir, "not-json.json");
+      writeFileSync(assessmentPath, "{not valid json");
+
+      expect(() =>
+        execFileSync(
+          process.execPath,
+          [
+            SCRIPT_PATH,
+            "--from-store", storePath,
+            "--assessment", assessmentPath,
+            "--out", join(dir, "out.md"),
+            "--dry-run"
+          ],
+          {
+            encoding: "utf8",
+            cwd: dir,
+            env: { ...process.env, GOOGLE_MAPS_API_KEY: "test-dry-run-key-not-real" }
+          }
+        )
+      ).toThrow();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

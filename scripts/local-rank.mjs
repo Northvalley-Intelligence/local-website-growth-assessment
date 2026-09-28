@@ -130,7 +130,11 @@ export const PLACE_FIELDS = [
   "googleMapsUri",
   "editorialSummary",
   "pureServiceAreaBusiness",
-  "location"
+  "location",
+  // contact field — may bill Place Details at a higher SKU; one call per
+  // run, client only (handoff 11 part B: carries the client's own profile
+  // phone for the NAP phone-consistency check).
+  "nationalPhoneNumber"
 ];
 
 export const SEARCH_FIELD_MASK = PLACE_FIELDS.map((f) => `places.${f}`).join(",");
@@ -538,6 +542,257 @@ export function extractOwnProfile(place, center) {
     hasDescription: Boolean(place.editorialSummary),
     distanceMi: haversineMiles(center, place.location)
   };
+}
+
+// --------------------------------------------------------------------------
+// NAP consistency — site vs. Google profile (handoff 11 part B)
+// --------------------------------------------------------------------------
+
+/**
+ * The raw Places fields NAP needs from a completed place object -
+ * `nationalPhoneNumber`, `formattedAddress`, `displayName`,
+ * `pureServiceAreaBusiness`. Works on either a ranked result already
+ * completed via `completeResult` (the client's own row when it ranks), or
+ * the raw place behind a dedicated own-profile lookup (`lookupOwnProfile`) -
+ * both are "the client's own profile already fetched there" per the handoff.
+ * Null when there is no place (never fabricated).
+ */
+export function extractNapProfile(place) {
+  if (!place) return null;
+  return {
+    found: true,
+    name: displayNameOf(place),
+    phone: place.nationalPhoneNumber ?? null,
+    formattedAddress: place.formattedAddress ?? null,
+    pureServiceAreaBusiness:
+      typeof place.pureServiceAreaBusiness === "boolean" ? place.pureServiceAreaBusiness : null
+  };
+}
+
+/**
+ * Digits-only phone comparison key (amendment 4, 2026-09-28 08:24 L2): strips
+ * everything but digits, then drops a leading US country code "1" (an
+ * 11-digit number starting with "1" becomes 10 digits). This is what makes
+ * "(470) 524-2882" and "470-524-2882" compare equal instead of a false
+ * mismatch. Does not attempt international numbers.
+ */
+export function normalizePhoneDigits(phone) {
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+}
+
+/** The comma-joined list after a `foundWithExamples()`-shaped "<base> Examples found: <a>, <b>." string. */
+function examplesFromEvidence(evidenceText) {
+  const marker = "Examples found: ";
+  const idx = evidenceText.indexOf(marker);
+  if (idx === -1) return [];
+  let rest = evidenceText.slice(idx + marker.length).trim();
+  if (rest.endsWith(".")) rest = rest.slice(0, -1);
+  return rest
+    .split(", ")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Every distinct phone-like string the scanner reported as appearing on the
+ * client's OWN website, read from the persisted assessment (report) JSON.
+ *
+ * IMPORTANT (handoff 11 report-back finding): the report JSON does NOT carry
+ * a raw `phoneNumbers` array anywhere - `ExtractedSignals` (which does have
+ * one) is never serialized into `AssessmentReport`; only its `categories[].
+ * factors[]` survive. The only place site phone numbers still appear in the
+ * saved JSON is the `evidence` text of two existing factors, in the exact
+ * "<base> Examples found: <a>, <b>." shape `foundWithExamples()` builds
+ * (apps/worker/src/index.ts): localVisibility's "Visible phone number" (raw
+ * visible text, matched by the scanner's own phone regex) and leadConversion's
+ * "Click-to-call link" (tel: hrefs - the "tel:" prefix is stripped here).
+ * Both lists are capped at 6 examples by the scanner itself, so a site with
+ * more than 6 distinct phone numbers loses the extras; acceptable for a
+ * consistency check whose job is "does ANY published number match the
+ * profile", not an exhaustive inventory.
+ */
+export function sitePhoneNumbers(assessment) {
+  const numbers = new Set();
+  for (const category of (assessment && assessment.categories) || []) {
+    for (const factor of category.factors || []) {
+      if (typeof factor.evidence !== "string") continue;
+      if (factor.check === "Visible phone number") {
+        for (const value of examplesFromEvidence(factor.evidence)) numbers.add(value);
+      }
+      if (factor.check === "Click-to-call link") {
+        for (const value of examplesFromEvidence(factor.evidence)) {
+          numbers.add(value.replace(/^tel:/i, ""));
+        }
+      }
+    }
+  }
+  return [...numbers];
+}
+
+/**
+ * The client's OWN business name as the assessment exposes it - schema name
+ * if present, per the handoff. NOT BUILT: the scanner extracts JSON-LD/
+ * microdata schema TYPES (`ExtractedSignals.schemaTypes`) but never the
+ * schema `name` property, and nothing else in the persisted report carries a
+ * parsed site business name - so this always returns null today, which makes
+ * the name leg of `napConsistency` always `could_not_assess` for now (never a
+ * fabricated mismatch). Kept as its own function, named for what it is meant
+ * to return, so a future scanner change that starts capturing a real schema
+ * name only has to change this one place - `napConsistency` does not.
+ * Takes `assessment` (unused today) to keep the same call shape as
+ * `sitePhoneNumbers`/`siteStreetAddress` for whenever it is built.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function siteBusinessName(assessment) {
+  return null;
+}
+
+/**
+ * The client's OWN street address as the assessment exposes it. NOT BUILT:
+ * no check anywhere in the scanner parses or stores a site address (schema
+ * or otherwise) - see the report-back note. Always null today, which makes
+ * the address leg fall through to `could_not_assess` whenever it is not
+ * `not_applicable` on the profile side alone. Takes `assessment` (unused
+ * today) to keep the same call shape as `sitePhoneNumbers`/`siteBusinessName`
+ * for whenever it is built.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function siteStreetAddress(assessment) {
+  return null;
+}
+
+/** US ZIP (5 digits) + the leading street number from a free-text address string; null when either is absent. */
+function addressKey(text) {
+  const s = String(text ?? "");
+  const zipMatch = s.match(/\b(\d{5})(?:-\d{4})?\b/);
+  const numberMatch = s.match(/(\d+)/);
+  if (!zipMatch || !numberMatch) return null;
+  return `${numberMatch[1]}|${zipMatch[1]}`;
+}
+
+/** True when two free-text addresses share the same leading street number AND ZIP code (amendment 5's "compare the postal code + street number only"). */
+export function addressComponentsMatch(profileAddress, siteAddress) {
+  const a = addressKey(profileAddress);
+  const b = addressKey(siteAddress);
+  return Boolean(a) && a === b;
+}
+
+/**
+ * NAP (name/address/phone) consistency between the client's own Google
+ * Business Profile (`ownProfile` - see `extractNapProfile`, or null when no
+ * own profile could be found at all) and the site's own assessment (report)
+ * JSON. Four-state per field (2026-09-28 00:42 L2 Decision 4, 08:24 L2
+ * amendments 4-5) - a missing/unreachable comparison is `could_not_assess`,
+ * NEVER a fabricated defect. Returns `{ phone, name, address, notes }`:
+ * the three states, plus one human-readable line per field for the markdown
+ * report. `notes` may name the actual profile/site phone number or name -
+ * that is fine for a gitignored `--out` file, but `notes` must NEVER be
+ * copied into `toStore()`'s output, which keeps states only (see `toStore`).
+ */
+export function napConsistency(ownProfile, assessment) {
+  const hasOwnProfile = Boolean(ownProfile && ownProfile.found);
+  const notes = [];
+
+  // --- phone ---
+  let phone;
+  if (!hasOwnProfile || !ownProfile.phone) {
+    phone = "could_not_assess";
+    notes.push(
+      hasOwnProfile
+        ? "Phone: your Google profile does not publish a phone number, so it could not be compared to your website."
+        : "Phone: we could not find your Google Business Profile, so its phone number could not be compared to your website."
+    );
+  } else {
+    const siteNumbers = sitePhoneNumbers(assessment);
+    if (siteNumbers.length === 0) {
+      phone = "not_applicable";
+      notes.push(
+        "Phone: your website does not publish a phone number, so there is nothing to compare to your Google profile."
+      );
+    } else {
+      const profileDigits = normalizePhoneDigits(ownProfile.phone);
+      const match = siteNumbers.find((n) => normalizePhoneDigits(n) === profileDigits);
+      phone = match ? "observed" : "not_observed";
+      notes.push(
+        match
+          ? `Phone on your Google profile (${ownProfile.phone}) matches the phone on your website (${match}).`
+          : `Phone on your Google profile (${ownProfile.phone}) does not match the phone on your website (${siteNumbers.join(", ")}).`
+      );
+    }
+  }
+
+  // --- name ---
+  let name;
+  const siteName = siteBusinessName(assessment);
+  if (!hasOwnProfile) {
+    name = "could_not_assess";
+    notes.push(
+      "Business name: we could not find your Google Business Profile, so its name could not be compared to your website."
+    );
+  } else if (!siteName) {
+    name = "could_not_assess";
+    notes.push(
+      "Business name: we could not find a structured business name on your website to compare to your Google profile."
+    );
+  } else {
+    const profileName = normalizeNameForMatch(ownProfile.name || "");
+    const websiteName = normalizeNameForMatch(siteName);
+    const match =
+      Boolean(profileName) &&
+      Boolean(websiteName) &&
+      (profileName.includes(websiteName) || websiteName.includes(profileName));
+    name = match ? "observed" : "not_observed";
+    notes.push(
+      match
+        ? `Business name on your Google profile matches your website (${ownProfile.name}).`
+        : `Business name on your Google profile (${ownProfile.name}) does not match your website (${siteName}).`
+    );
+  }
+
+  // --- address ---
+  let address;
+  if (!hasOwnProfile) {
+    address = "could_not_assess";
+    notes.push(
+      "Address: we could not find your Google Business Profile, so its address could not be compared to your website."
+    );
+  } else if (ownProfile.pureServiceAreaBusiness === true || !ownProfile.formattedAddress) {
+    address = "not_applicable";
+    notes.push(
+      ownProfile.pureServiceAreaBusiness === true
+        ? "Address: your Google profile is a service-area business with no public address, so there is nothing to compare."
+        : "Address: your Google profile does not publish a public address, so there is nothing to compare."
+    );
+  } else {
+    const siteAddress = siteStreetAddress(assessment);
+    if (!siteAddress) {
+      address = "could_not_assess";
+      notes.push(
+        "Address: we could not find a structured address on your website to compare to your Google profile."
+      );
+    } else {
+      const match = addressComponentsMatch(ownProfile.formattedAddress, siteAddress);
+      address = match ? "observed" : "not_observed";
+      notes.push(
+        match
+          ? "Address on your Google profile matches your website."
+          : `Address on your Google profile (${ownProfile.formattedAddress}) does not match your website (${siteAddress}).`
+      );
+    }
+  }
+
+  return { phone, name, address, notes };
+}
+
+/** The NAP section appended to the markdown report - one line per field (`napConsistency`'s `notes`). Null when NAP was not computed (no `--assessment` given). */
+export function renderNapSection(napResult) {
+  if (!napResult) return null;
+  return [
+    "## Local Citation & Brand Consistency (NAP)",
+    "",
+    ...napResult.notes.map((note) => `- ${note}`)
+  ].join("\n");
 }
 
 /**
@@ -979,6 +1234,12 @@ function placeIdAtPosition(results, position) {
  * from `ownProfile.placeId` when the business was found only via the
  * own-profile lookup; each competitor from its own `position`) - never
  * re-derived by name/category matching, so this stays a pure lookup.
+ *
+ * `nap` (handoff 11 part B), when `result.nap` is present, carries ONLY the
+ * three `napConsistency` states (phone/name/address) - never the phone
+ * numbers or names themselves, which is what `napConsistency`'s `notes` (not
+ * copied here) and the markdown `--out` are for. Omitted entirely when NAP
+ * was not computed (no `--assessment` given).
  */
 export function toStore(result, { pulledAt } = {}) {
   const terms = (result.terms ?? []).map((t) => {
@@ -1017,7 +1278,16 @@ export function toStore(result, { pulledAt } = {}) {
     top: result.top,
     depth: result.depth,
     pulledAt: pulledAt ?? new Date().toISOString(),
-    terms
+    terms,
+    ...(result.nap
+      ? {
+          nap: {
+            phone: result.nap.phone,
+            name: result.nap.name,
+            address: result.nap.address
+          }
+        }
+      : {})
   };
 }
 
@@ -1077,6 +1347,11 @@ const USAGE = [
   "--from-store <path> re-pulls fresh, live results using domain/name/place/terms/",
   "radiusKm/top/depth read back from that store file (overrides those flags/defaults).",
   "",
+  "--assessment <scan.json> compares the client's own Google profile (phone/name/",
+  "address) against that assessment's result JSON (NAP consistency, handoff 11 part",
+  "B) - appends a section to --out and, with --store, a states-only nap block to the",
+  "store file. Omit it to skip NAP entirely (unchanged prior behavior).",
+  "",
   "--no-sab turns OFF includePureServiceAreaBusinesses (default ON) - for an A/B",
   "re-run only; a hidden-address pure service-area business is excluded from",
   "results when this is off (Experiment A, 2026-09-22).",
@@ -1096,6 +1371,7 @@ export function parseArgs(argv) {
     json: null,
     store: null,
     fromStore: null,
+    assessment: null,
     env: ".env.local",
     radiusKm: DEFAULT_RADIUS_KM,
     top: DEFAULT_TOP,
@@ -1112,6 +1388,7 @@ export function parseArgs(argv) {
     "--json": "json",
     "--store": "store",
     "--from-store": "fromStore",
+    "--assessment": "assessment",
     "--env": "env",
     "--radius-km": "radiusKm",
     "--top": "top",
@@ -1200,6 +1477,9 @@ function printDryRun(opts, terms, envState) {
     `Raw JSON:   ${opts.json}`,
     ...(opts.store ? [`Store:      ${opts.store} (local-rank-store/1 - place IDs + our own findings only)`] : []),
     ...(opts.fromStore ? [`From store: ${opts.fromStore}`] : []),
+    ...(opts.assessment
+      ? [`Assessment: ${opts.assessment} (NAP consistency will be computed and appended to --out)`]
+      : []),
     "",
     "1) Geocode the area centre (key sent as a query param, never printed):",
     `   GET ${GEOCODE_HOST}?address=${encodeURIComponent(geocodeAddressParam(opts.place))}&key=<REDACTED>`,
@@ -1327,9 +1607,13 @@ async function searchOwnProfileText(name, place, apiKey, includeSab = true) {
 /**
  * ONE extra Places Text Search to find the business's own profile directly,
  * used only for a term whose searched depth does not contain the business.
- * Never fabricates a match: null when the dedicated search finds nothing.
- * Uses the same includeSab body as the main search (a hidden-address pure
- * service-area business's own profile needs it too).
+ * Never fabricates a match: `{ ownProfile: null, napProfile: null }` when the
+ * dedicated search finds nothing. Uses the same includeSab body as the main
+ * search (a hidden-address pure service-area business's own profile needs it
+ * too). Returns `napProfile` (see `extractNapProfile`) alongside the existing
+ * `ownProfile` shape so a NAP-consistency check made from this SAME lookup
+ * never needs a second API call (handoff 11 part B: "the client's own
+ * profile is already fetched there").
  */
 async function lookupOwnProfile({ domain, name, place, apiKey, center, includeSab = true }) {
   const resolvedName = resolveBusinessName(name, domain);
@@ -1338,9 +1622,12 @@ async function lookupOwnProfile({ domain, name, place, apiKey, center, includeSa
   );
   const rawResults = await searchOwnProfileText(resolvedName, place, apiKey, includeSab);
   const idx = matchOwnProfile(rawResults, domain, name || resolvedName);
-  if (idx === null) return null;
+  if (idx === null) return { ownProfile: null, napProfile: null };
   const complete = await completeResult(rawResults[idx], apiKey);
-  return extractOwnProfile(complete, center);
+  return {
+    ownProfile: extractOwnProfile(complete, center),
+    napProfile: extractNapProfile(complete)
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -1403,6 +1690,19 @@ async function main() {
     return;
   }
 
+  // A local file read, not a network call - validated even in --dry-run, and
+  // even though NAP itself is only computed on a live run below (it needs a
+  // live-fetched own profile).
+  let assessment = null;
+  if (opts.assessment) {
+    try {
+      assessment = JSON.parse(readFileSync(opts.assessment, "utf8"));
+    } catch (err) {
+      fail(`Could not read/parse --assessment ${opts.assessment}: ${err.message}`, 1);
+      return;
+    }
+  }
+
   if (opts.dryRun) {
     printDryRun(opts, terms, envState);
     process.exit(0);
@@ -1414,6 +1714,11 @@ async function main() {
 
   const sections = [];
   const jsonTerms = [];
+  // The client's own profile, for NAP only - captured once, from whichever
+  // term first resolves it (ranked or found via the own-profile lookup);
+  // every term shares the same business, so this reuses an already-fetched
+  // place rather than making another API call (handoff 11 part B).
+  let clientNapProfile = null;
   for (const term of terms) {
     const rawResults = await searchText(term, center, opts.radiusKm, apiKey, opts.depth, opts.sab);
     const idx = matchBusiness(rawResults, opts.domain, opts.name);
@@ -1423,8 +1728,12 @@ async function main() {
       rawResults.map((r, i) => (completeIndexes.has(i) ? completeResult(r, apiKey) : r))
     );
 
+    if (idx !== null && !clientNapProfile) {
+      clientNapProfile = extractNapProfile(results[idx]);
+    }
+
     // One extra API call per unranked term only - never when the business already ranks.
-    const ownProfile =
+    const ownProfileLookup =
       idx === null
         ? await lookupOwnProfile({
             domain: opts.domain,
@@ -1434,7 +1743,11 @@ async function main() {
             center,
             includeSab: opts.sab
           })
-        : null;
+        : { ownProfile: null, napProfile: null };
+    const ownProfile = ownProfileLookup.ownProfile;
+    if (!clientNapProfile && ownProfileLookup.napProfile) {
+      clientNapProfile = ownProfileLookup.napProfile;
+    }
 
     const { rank, searched, section, recommendations, client, competitors, topCompetitor } = buildTermOutput({
       term,
@@ -1469,6 +1782,15 @@ async function main() {
     });
   }
 
+  // NAP consistency (handoff 11 part B) - only when --assessment was given.
+  let nap = null;
+  if (assessment) {
+    const napResult = napConsistency(clientNapProfile, assessment);
+    nap = { phone: napResult.phone, name: napResult.name, address: napResult.address };
+    const napSection = renderNapSection(napResult);
+    if (napSection) sections.push(napSection);
+  }
+
   const markdown = renderMarkdown({ sections });
   writeFileSync(opts.out, markdown, "utf8");
 
@@ -1480,7 +1802,8 @@ async function main() {
     radiusKm: opts.radiusKm,
     top: opts.top,
     depth: opts.depth,
-    terms: jsonTerms
+    terms: jsonTerms,
+    ...(nap ? { nap } : {})
   };
 
   if (opts.json) {

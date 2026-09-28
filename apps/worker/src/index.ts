@@ -3,6 +3,7 @@ import {
   assessDemandSatisfaction,
   disclaimer,
   gradeFromScore,
+  isOwnProfileLink,
   redactSecrets,
   scoringCategoryLabels,
   scoringWeights,
@@ -452,6 +453,10 @@ export async function extractSignals(
     options
   );
 
+  const ownProfileLinks = unique(allLinks.filter(isOwnProfileLink));
+  const ownProfileLinksCheckStatus: "found" | "not_found" | "could_not_assess" =
+    pages.length === 0 ? "could_not_assess" : ownProfileLinks.length > 0 ? "found" : "not_found";
+
   const clickToCallLinks = allLinks.filter((link) =>
     link.toLowerCase().startsWith("tel:")
   );
@@ -559,7 +564,9 @@ export async function extractSignals(
     openGraphImageFound: pages.some((page) => page.openGraphImageFound),
     sitemapFound: sitemapCheckStatus === "found",
     sitemapCheckStatus,
-    securityHeaders: collectSecurityHeaders(pages)
+    securityHeaders: collectSecurityHeaders(pages),
+    ownProfileLinks,
+    ownProfileLinksCheckStatus
   };
 }
 
@@ -768,6 +775,37 @@ function scoreSignals(
           "Reviews reduce perceived risk and help visitors feel safer reaching out.",
           "Testimonials are curated proof; reviews are often seen as broader social proof.",
           "Add review snippets or link to review profiles where appropriate."
+        ),
+        evidence(
+          signals.ownProfileLinksCheckStatus === "found",
+          "Links to your own review/social profiles",
+          foundWithExamples(
+            "Links to review or social profiles were found.",
+            signals.ownProfileLinks
+          ),
+          foundWithExamples(
+            "We found links from the website to its own Facebook, Yelp, BBB, or other review/social profile.",
+            signals.ownProfileLinks
+          ),
+          signals.ownProfileLinksCheckStatus === "could_not_assess"
+            ? "Links to review or social profiles could not be confirmed."
+            : `We did not find a link to your Facebook, Yelp or BBB profile on the ${signals.pages.length} page${
+                signals.pages.length === 1 ? "" : "s"
+              } we crawled.`,
+          signals.ownProfileLinksCheckStatus === "could_not_assess"
+            ? "The crawl did not return any pages, so we could not confirm whether the site links to its own profiles. This is not the same as confirming a link is missing."
+            : "Linking directly to your own Facebook, Yelp, or BBB profile lets visitors and search engines confirm the profile really belongs to this business, and gives visitors a one-click path to read reviews.",
+          "Review or rating language shows visitors that reviews exist; a direct link is a stronger, independently verifiable connection between the website and the business's own profiles.",
+          signals.ownProfileLinksCheckStatus === "could_not_assess"
+            ? "Re-run the assessment, or confirm the site is reachable."
+            : "Add links (footer or contact page are common places) to your Facebook, Yelp, BBB, or other review/social profiles.",
+          {
+            foundDetails: signals.ownProfileLinks,
+            missingDetails: reviewedPages,
+            ...(signals.ownProfileLinksCheckStatus === "could_not_assess"
+              ? { status: "could_not_assess" as const }
+              : {})
+          }
         ),
         evidence(
           signals.photoSignals.length > 0,
