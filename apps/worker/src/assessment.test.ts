@@ -901,14 +901,19 @@ describe("Phase 1 assessment pipeline", () => {
     expect(report.crawlMetadata.pagespeed).toEqual({
       status: "failed",
       explanation:
-        "PageSpeed could not be reached, so the report does not make a performance claim from that API."
+        "PageSpeed could not be reached on any of 3 attempts, so the report does not make a performance claim from that API."
     });
-    expect(
-      report.categories.find((category) => category.category === "performance")
-        ?.evidenceMissing
-    ).toContain(
-      "PageSpeed could not be reached, so the report does not make a performance claim from that API."
+    const performanceCategory = report.categories.find(
+      (category) => category.category === "performance"
     );
+    expect(performanceCategory?.evidenceMissing).toContain(
+      "PageSpeed could not be reached on any of 3 attempts, so the report does not make a performance claim from that API."
+    );
+    // Zero samples must never silently score zero as if it were measured —
+    // the category is marked unavailable (this codebase's could_not_assess
+    // state at the category level) rather than scored.
+    expect(performanceCategory?.scoreStatus).toBe("unavailable");
+    expect(performanceCategory?.score).toBe(0);
   });
 
   it("uses the PageSpeed-specific timeout instead of the crawl request timeout", async () => {
@@ -940,8 +945,12 @@ describe("Phase 1 assessment pipeline", () => {
 
     expect(report.crawlMetadata.pagespeed).toEqual({
       status: "success",
-      explanation: "PageSpeed reported a mobile performance score of 91/100.",
-      mobilePerformanceScore: 91
+      explanation:
+        "PageSpeed reported a median mobile performance score of 91/100 across 3 samples (91, 91, 91; spread 0 points).",
+      mobilePerformanceScore: 91,
+      samples: [91, 91, 91],
+      spread: 0,
+      sampleCount: 3
     });
     expect(
       report.categories.find((category) => category.category === "performance")
@@ -949,6 +958,149 @@ describe("Phase 1 assessment pipeline", () => {
       scoreStatus: "scored",
       score: 91
     });
+  });
+
+  it("takes three PageSpeed samples concurrently (not in series) and scores the median", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>Services for local homeowners. ${"Detailed service area and appointment information. ".repeat(12)}</body></html>`
+    });
+
+    const callStartTimes: number[] = [];
+    const scoresByCallOrder = [82, 90, 88];
+    let callIndex = 0;
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        pagespeedApiKey: "test-key",
+        pageSpeedAdapter: () => {
+          callStartTimes.push(Date.now());
+          const score = scoresByCallOrder[callIndex] ?? 0;
+          callIndex += 1;
+          return new Promise((resolve) => {
+            setTimeout(
+              () =>
+                resolve({
+                  mobilePerformanceScore: score,
+                  summary: `PageSpeed reported a mobile performance score of ${score}/100.`
+                }),
+              30
+            );
+          });
+        },
+        crawlDelayMs: 0
+      }
+    );
+
+    // Concurrency proof: all 3 attempts were started essentially at once,
+    // not one-after-another (three sequential 30ms calls would spread the
+    // start times out by ~60ms; concurrent calls start within a few ms).
+    expect(callStartTimes).toHaveLength(3);
+    expect(Math.max(...callStartTimes) - Math.min(...callStartTimes)).toBeLessThan(20);
+
+    // sorted [82, 88, 90] -> median 88
+    expect(report.crawlMetadata.pagespeed).toEqual({
+      status: "success",
+      explanation:
+        "PageSpeed reported a median mobile performance score of 88/100 across 3 samples (82, 90, 88; spread 8 points).",
+      mobilePerformanceScore: 88,
+      samples: [82, 90, 88],
+      spread: 8,
+      sampleCount: 3
+    });
+    const performanceCategory = report.categories.find(
+      (category) => category.category === "performance"
+    );
+    expect(performanceCategory).toMatchObject({ scoreStatus: "scored", score: 88 });
+  });
+
+  it("uses the median of two samples and reports the count when one of three attempts fails", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>Services for local homeowners. ${"Detailed service area and appointment information. ".repeat(12)}</body></html>`
+    });
+
+    let callIndex = 0;
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        pagespeedApiKey: "test-key",
+        pageSpeedAdapter: async () => {
+          const index = callIndex;
+          callIndex += 1;
+          if (index === 1) {
+            throw new Error("simulated PageSpeed rate limit");
+          }
+          const score = index === 0 ? 80 : 90;
+          return {
+            mobilePerformanceScore: score,
+            summary: `PageSpeed reported a mobile performance score of ${score}/100.`
+          };
+        },
+        crawlDelayMs: 0
+      }
+    );
+
+    // median of [80, 90] = 85; count of 2 (of 3 attempted) is reported.
+    expect(report.crawlMetadata.pagespeed).toEqual({
+      status: "success",
+      explanation:
+        "PageSpeed reported a median mobile performance score of 85/100 across 2 of 3 attempted samples (80, 90; spread 10 points).",
+      mobilePerformanceScore: 85,
+      samples: [80, 90],
+      spread: 10,
+      sampleCount: 2
+    });
+    const performanceCategory = report.categories.find(
+      (category) => category.category === "performance"
+    );
+    expect(performanceCategory).toMatchObject({ scoreStatus: "scored", score: 85 });
+  });
+
+  it("flags a wide spread as unstable and names the range in the evidence text", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><body>Services for local homeowners. ${"Detailed service area and appointment information. ".repeat(12)}</body></html>`
+    });
+
+    // Reproduces the measured bimodal PageSpeed behaviour (99, 99, 76, 76, 99
+    // on one unchanged live site) that motivated median-of-three sampling.
+    const scoresByCallOrder = [99, 76, 99];
+    let callIndex = 0;
+
+    const report = await assessWebsite(
+      { url: "https://example.com/" },
+      {
+        fetchAdapter,
+        pagespeedApiKey: "test-key",
+        pageSpeedAdapter: async () => {
+          const score = scoresByCallOrder[callIndex] ?? 0;
+          callIndex += 1;
+          return {
+            mobilePerformanceScore: score,
+            summary: `PageSpeed reported a mobile performance score of ${score}/100.`
+          };
+        },
+        crawlDelayMs: 0
+      }
+    );
+
+    // sorted [76, 99, 99] -> median 99; spread 23 >= the 15-point threshold.
+    expect(report.crawlMetadata.pagespeed.spread).toBe(23);
+    expect(report.crawlMetadata.pagespeed.mobilePerformanceScore).toBe(99);
+    expect(report.crawlMetadata.pagespeed.explanation).toContain("unstable");
+    expect(report.crawlMetadata.pagespeed.explanation).toContain("76");
+    expect(report.crawlMetadata.pagespeed.explanation).toContain("99");
+
+    const performanceCategory = report.categories.find(
+      (category) => category.category === "performance"
+    );
+    // The instability and range must show up in the evidence text a reader
+    // sees, not just in the raw crawlMetadata — a lone precise-looking
+    // number from a bimodal source is exactly the false precision to avoid.
+    expect(performanceCategory?.factors[0]?.evidence).toContain("unstable");
+    expect(performanceCategory?.factors[0]?.evidence).toContain("76");
+    expect(performanceCategory?.factors[0]?.evidence).toContain("99");
   });
 
   it("scores measured PageSpeed performance from the measured score", async () => {

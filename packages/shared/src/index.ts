@@ -302,7 +302,18 @@ export type CrawlMetadata = {
   pagespeed: {
     status: "skipped" | "success" | "failed";
     explanation: string;
+    /** Median of `samples` (rounded), when at least one sample succeeded. */
     mobilePerformanceScore?: number;
+    /**
+     * Raw per-attempt scores, in attempt order, for every PageSpeed call
+     * that returned successfully (up to 3, taken concurrently). Kept so the
+     * measurement is auditable rather than collapsed to one lone number.
+     */
+    samples?: number[];
+    /** max(samples) - min(samples); only meaningful with 2+ samples. */
+    spread?: number;
+    /** How many of the (up to 3) attempted samples actually succeeded. */
+    sampleCount?: number;
   };
 };
 
