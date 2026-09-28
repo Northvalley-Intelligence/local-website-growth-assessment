@@ -1256,24 +1256,33 @@ function buildMeasuredPerformanceCategory(
   const weight = scoringWeights.performance;
   const weightedContribution = Math.round((score * weight) / 100);
   const isGood = score >= 90;
-  const evidenceText = `PageSpeed mobile score was ${score}.`;
+  const sampleCount = pagespeed.sampleCount ?? 1;
+  const spreadIsWide =
+    typeof pagespeed.spread === "number" &&
+    pagespeed.spread >= PAGESPEED_SPREAD_THRESHOLD_POINTS;
+  // Bimodal PageSpeed results (e.g. 99/99/76 on unchanged code) would otherwise
+  // present as one clean, precise-looking number. When the spread crosses the
+  // threshold, say so directly in the evidence text rather than hiding it.
+  const stabilityNote = spreadIsWide
+    ? ` This measurement was unstable across samples (${pagespeed.samples?.join(", ")}; spread ${pagespeed.spread} points), so treat it as approximate rather than precise.`
+    : "";
+  const baseEvidenceText = isGood
+    ? `PageSpeed mobile score was ${score}.`
+    : `Mobile PageSpeed score was ${score}, below the recommended good range.`;
+  const evidenceText = `${baseEvidenceText}${stabilityNote}`;
   const factor: CategoryScoreFactor = {
-    label: isGood
-      ? evidenceText
-      : `Mobile PageSpeed score was ${score}, below the recommended good range.`,
+    label: evidenceText,
     status: isGood ? "observed" : "not_observed",
     passed: isGood,
-    evidence: isGood
-      ? evidenceText
-      : `Mobile PageSpeed score was ${score}, below the recommended good range.`,
+    evidence: evidenceText,
     evidenceDetails: [
       `Measured by Google PageSpeed Insights API for ${pagespeed.mobilePerformanceScore}/100 mobile performance.`,
       pagespeed.explanation
     ],
     check: "Mobile PageSpeed score",
     businessExplanation: isGood
-      ? `We measured mobile performance and received a strong score of ${score}/100.`
-      : `We measured mobile performance and received a score of ${score}/100. This suggests some mobile visitors may wait longer than they should before they can read the page or find contact options.`,
+      ? `We measured mobile performance and received a strong score of ${score}/100.${stabilityNote}`
+      : `We measured mobile performance and received a score of ${score}/100. This suggests some mobile visitors may wait longer than they should before they can read the page or find contact options.${stabilityNote}`,
     existingContentNote:
       "A site can have strong content and still lose visitors if pages load slowly; performance is a separate visitor-experience signal.",
     recommendedAction: isGood
@@ -1291,12 +1300,12 @@ function buildMeasuredPerformanceCategory(
     factors: [factor],
     coverage: { assessable: 1, total: 1, couldNotAssess: 0, notApplicable: 0 },
     scoreExplanation: {
-      formula: `PageSpeed mobile performance score = ${score}/100. Category weight: ${weight}%. Weighted contribution: ${weightedContribution} points.`,
+      formula: `PageSpeed mobile performance score = ${score}/100 (median of ${sampleCount} sample${sampleCount === 1 ? "" : "s"}). Category weight: ${weight}%. Weighted contribution: ${weightedContribution} points.`,
       passedFactors: isGood ? 1 : 0,
       totalFactors: 1,
       weightedContribution,
-      confidence: "medium",
-      summary: `Performance scored ${score}/100 from the measured PageSpeed mobile score.`
+      confidence: spreadIsWide ? "low" : "medium",
+      summary: `Performance scored ${score}/100 from the measured PageSpeed mobile score.${stabilityNote}`
     },
     evidenceFound: [evidenceText],
     evidenceMissing: isGood
@@ -1875,7 +1884,73 @@ function weightedOverallScore(categories: CategoryAssessment[]): number {
   return Math.round(weighted / weightTotal);
 }
 
-async function runPageSpeed(
+/** How many concurrent PageSpeed samples we take per assessment. */
+const PAGESPEED_SAMPLE_COUNT = 3;
+
+/**
+ * Max-minus-min spread (points) above which a set of PageSpeed samples is
+ * treated as unstable rather than a precise measurement.
+ *
+ * Chosen from a direct measurement, not a guess: five back-to-back calls
+ * against one unchanged live site returned 99, 99, 76, 76, 99 — a 23-point
+ * spread that is roughly bimodal (two clusters), not jitter around a mean.
+ * 15 sits comfortably below that observed bimodal gap (so the coin-flip case
+ * is always caught) while staying above the few-point run-to-run noise
+ * PageSpeed shows on a genuinely stable page, so ordinary measurement noise
+ * is not flagged as unstable.
+ */
+const PAGESPEED_SPREAD_THRESHOLD_POINTS = 15;
+
+/** Standard median: middle value for odd counts, average of the two middle values for even counts. */
+function medianOf(values: number[]): number {
+  if (values.length === 0) {
+    throw new Error("medianOf requires at least one value");
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    const lower = sorted[mid - 1];
+    const upper = sorted[mid];
+    return ((lower ?? 0) + (upper ?? 0)) / 2;
+  }
+  return sorted[mid] ?? 0;
+}
+
+function summarizePagespeedSamples(samples: number[]): {
+  score: number;
+  spread?: number;
+  explanation: string;
+} {
+  const score = Math.round(medianOf(samples));
+  const sampleList = samples.join(", ");
+
+  if (samples.length < 2) {
+    return {
+      score,
+      explanation: `PageSpeed reported a mobile performance score of ${score}/100 from ${samples.length} of ${PAGESPEED_SAMPLE_COUNT} attempted samples (${sampleList}). The spread could not be measured from a single sample.`
+    };
+  }
+
+  const spread = Math.max(...samples) - Math.min(...samples);
+  const countNote =
+    samples.length < PAGESPEED_SAMPLE_COUNT
+      ? `${samples.length} of ${PAGESPEED_SAMPLE_COUNT} attempted samples`
+      : `${PAGESPEED_SAMPLE_COUNT} samples`;
+  const base = `PageSpeed reported a median mobile performance score of ${score}/100 across ${countNote} (${sampleList}; spread ${spread} points).`;
+  const explanation =
+    spread >= PAGESPEED_SPREAD_THRESHOLD_POINTS
+      ? `${base} This measurement was unstable: samples ranged from ${Math.min(...samples)} to ${Math.max(...samples)}, so treat the score as approximate rather than precise.`
+      : base;
+
+  return { score, spread, explanation };
+}
+
+/**
+ * Exported (like `crawlWebsite`/`extractSignals`) so it can be exercised
+ * directly — including against the real PageSpeed endpoint — without
+ * running a full `assessWebsite` scan.
+ */
+export async function runPageSpeed(
   url: string,
   options: AssessWebsiteOptions & {
     requestTimeoutMs: number;
@@ -1898,33 +1973,53 @@ async function runPageSpeed(
     };
   }
 
-  try {
-    const result = await withTimeout(
-      options.pageSpeedAdapter({
-        url,
-        apiKey: options.pagespeedApiKey
-      }),
-      options.pageSpeedTimeoutMs,
-      "PageSpeed request"
-    );
-    return {
-      status: "success",
-      explanation: result.summary,
-      mobilePerformanceScore: result.mobilePerformanceScore
-    };
-  } catch (error) {
-    emitAssessmentEvent(options.eventSink, {
-      type: "pagespeed.failed",
-      message:
-        error instanceof Error ? error.message : "PageSpeed could not be reached.",
-      url
-    });
+  const pageSpeedAdapter = options.pageSpeedAdapter;
+  const attempts = await Promise.allSettled(
+    Array.from({ length: PAGESPEED_SAMPLE_COUNT }, () =>
+      withTimeout(
+        pageSpeedAdapter({ url, apiKey: options.pagespeedApiKey! }),
+        options.pageSpeedTimeoutMs,
+        "PageSpeed request"
+      )
+    )
+  );
+
+  const successes = attempts.filter(
+    (attempt): attempt is PromiseFulfilledResult<Awaited<ReturnType<typeof pageSpeedAdapter>>> =>
+      attempt.status === "fulfilled"
+  );
+
+  for (const attempt of attempts) {
+    if (attempt.status === "rejected") {
+      emitAssessmentEvent(options.eventSink, {
+        type: "pagespeed.failed",
+        message:
+          attempt.reason instanceof Error
+            ? attempt.reason.message
+            : "PageSpeed could not be reached.",
+        url
+      });
+    }
+  }
+
+  if (successes.length === 0) {
     return {
       status: "failed",
-      explanation:
-        "PageSpeed could not be reached, so the report does not make a performance claim from that API."
+      explanation: `PageSpeed could not be reached on any of ${PAGESPEED_SAMPLE_COUNT} attempts, so the report does not make a performance claim from that API.`
     };
   }
+
+  const samples = successes.map((attempt) => attempt.value.mobilePerformanceScore);
+  const { score, spread, explanation } = summarizePagespeedSamples(samples);
+
+  return {
+    status: "success",
+    explanation,
+    mobilePerformanceScore: score,
+    samples,
+    spread,
+    sampleCount: samples.length
+  };
 }
 
 function emitAssessmentEvent(
