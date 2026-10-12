@@ -775,6 +775,39 @@ describe("Phase 1 assessment pipeline", () => {
     expect(crawl.pages.some((page) => page.url.endsWith("/after-limit"))).toBe(false);
   });
 
+  it("follows links that sit past 750 KB but under the 2 MB cap (large inline-CSS homepages)", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><head><style>${"x".repeat(1_000_000)}</style></head><body><a href="/about">About</a></body></html>`,
+      "https://example.com/about": "<html><body><h1>About</h1></body></html>"
+    });
+
+    const crawl = await crawlWebsite(new URL("https://example.com/"), fetchAdapter, {
+      crawlDelayMs: 0,
+      requestTimeoutMs: 100
+    });
+
+    expect(crawl.pages).toHaveLength(2);
+    expect(crawl.pages[0]?.truncated).toBe(false);
+    expect(crawl.pages.some((page) => page.url.endsWith("/about"))).toBe(true);
+  });
+
+  it("does not see links past the old 750 KB cap when it is passed explicitly (regression record)", async () => {
+    const { fetchAdapter } = mockedSite({
+      "https://example.com/": `<html><head><style>${"x".repeat(1_000_000)}</style></head><body><a href="/about">About</a></body></html>`,
+      "https://example.com/about": "<html><body><h1>About</h1></body></html>"
+    });
+
+    const crawl = await crawlWebsite(new URL("https://example.com/"), fetchAdapter, {
+      crawlDelayMs: 0,
+      requestTimeoutMs: 100,
+      maxResponseBytes: 750000
+    });
+
+    expect(crawl.pages).toHaveLength(1);
+    expect(crawl.pages[0]?.truncated).toBe(true);
+    expect(crawl.pages.some((page) => page.url.endsWith("/about"))).toBe(false);
+  });
+
   it("records redirect decisions without crossing the submitted-domain boundary", async () => {
     const fetchAdapter: FetchAdapter = async (url, init) => {
       if (url === "https://example.com/robots.txt") {

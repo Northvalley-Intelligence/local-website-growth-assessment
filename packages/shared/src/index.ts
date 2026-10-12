@@ -11,7 +11,8 @@ export const crawlerPolicy = {
   crawlDelayMs: 1000,
   requestTimeoutMs: 10000,
   pageSpeedTimeoutMs: 45000,
-  maxResponseBytes: 750000,
+  // Matches Googlebot's documented 2 MB cutoff for HTML (uncompressed); links past the cap are never seen.
+  maxResponseBytes: 2000000,
   maxConcurrency: 1,
   maxScanHistory: 50
 } as const;
