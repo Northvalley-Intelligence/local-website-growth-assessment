@@ -66,6 +66,8 @@ export type AssessWebsiteOptions = {
   crawlDelayMs?: number;
   requestTimeoutMs?: number;
   pageSpeedTimeoutMs?: number;
+  /** Delay between starting successive PageSpeed attempts (tests set 0). */
+  pageSpeedStaggerMs?: number;
   passiveAssetCheckLimit?: number;
   passiveAssetTimeoutMs?: number;
   maxResponseBytes?: number;
@@ -1944,6 +1946,66 @@ const PAGESPEED_SAMPLE_COUNT = 3;
  */
 const PAGESPEED_SPREAD_THRESHOLD_POINTS = 15;
 
+// Concurrent calls invite per-minute quota refusals, so attempt i starts i * this later.
+const PAGESPEED_STAGGER_MS = 2000;
+
+type PagespeedFailure = NonNullable<
+  CrawlMetadata["pagespeed"]["failures"]
+>[number];
+
+class PageSpeedError extends Error {
+  constructor(
+    message: string,
+    readonly kind: PagespeedFailure["kind"],
+    readonly httpStatus?: number
+  ) {
+    super(message);
+    this.name = "PageSpeedError";
+  }
+}
+
+function scrubPagespeedMessage(message: string): string {
+  return redactSecrets(message)
+    .replace(/\bkey=[^\s&"']+/gi, "key=[REDACTED]")
+    .slice(0, 200);
+}
+
+function classifyPagespeedFailure(
+  reason: unknown,
+  attempt: number
+): PagespeedFailure {
+  const raw = reason instanceof Error ? reason.message : String(reason ?? "");
+  const message = scrubPagespeedMessage(raw) || "PageSpeed could not be reached.";
+  const tagged = reason as Partial<PageSpeedError> | null;
+  if (tagged && typeof tagged === "object" && tagged.kind) {
+    return {
+      attempt,
+      kind: tagged.kind,
+      ...(typeof tagged.httpStatus === "number" ? { httpStatus: tagged.httpStatus } : {}),
+      message
+    };
+  }
+  if (/timed out after/.test(raw)) return { attempt, kind: "timeout", message };
+  return { attempt, kind: "network", message };
+}
+
+function describePagespeedFailures(
+  failures: PagespeedFailure[],
+  timeoutMs: number
+): string {
+  const tail = "so the report does not make a performance claim from that API.";
+  if (failures.length > 0 && failures.every((f) => f.kind === "timeout")) {
+    return `PageSpeed did not answer within our ${Math.round(timeoutMs / 1000)} s timeout on any of ${PAGESPEED_SAMPLE_COUNT} attempts, ${tail}`;
+  }
+  const http = failures.filter((f) => f.httpStatus !== undefined);
+  if (http.length > 0) {
+    const statuses = [...new Set(http.map((f) => f.httpStatus))].join(", ");
+    const first = http[0]!.message.replace(/^PageSpeed HTTP \d+:\s*/, "").slice(0, 120);
+    return `PageSpeed refused all ${PAGESPEED_SAMPLE_COUNT} attempts (HTTP ${statuses}: ${first}), ${tail}`;
+  }
+  return `PageSpeed could not be reached on any of ${PAGESPEED_SAMPLE_COUNT} attempts, ${tail}`;
+}
+
 /** Standard median: middle value for odd counts, average of the two middle values for even counts. */
 function medianOf(values: number[]): number {
   if (values.length === 0) {
@@ -2018,22 +2080,26 @@ export async function runPageSpeed(
 
   const pageSpeedAdapter = options.pageSpeedAdapter;
   const attempts = await Promise.allSettled(
-    Array.from({ length: PAGESPEED_SAMPLE_COUNT }, () =>
-      withTimeout(
+    Array.from({ length: PAGESPEED_SAMPLE_COUNT }, async (_, index) => {
+      const delay = index * (options.pageSpeedStaggerMs ?? PAGESPEED_STAGGER_MS);
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      return withTimeout(
         pageSpeedAdapter({ url, apiKey: options.pagespeedApiKey! }),
         options.pageSpeedTimeoutMs,
         "PageSpeed request"
-      )
-    )
+      );
+    })
   );
+  const failures: PagespeedFailure[] = [];
 
   const successes = attempts.filter(
     (attempt): attempt is PromiseFulfilledResult<Awaited<ReturnType<typeof pageSpeedAdapter>>> =>
       attempt.status === "fulfilled"
   );
 
-  for (const attempt of attempts) {
+  for (const [index, attempt] of attempts.entries()) {
     if (attempt.status === "rejected") {
+      failures.push(classifyPagespeedFailure(attempt.reason, index + 1));
       emitAssessmentEvent(options.eventSink, {
         type: "pagespeed.failed",
         message:
@@ -2048,7 +2114,8 @@ export async function runPageSpeed(
   if (successes.length === 0) {
     return {
       status: "failed",
-      explanation: `PageSpeed could not be reached on any of ${PAGESPEED_SAMPLE_COUNT} attempts, so the report does not make a performance claim from that API.`
+      explanation: describePagespeedFailures(failures, options.pageSpeedTimeoutMs),
+      failures
     };
   }
 
@@ -2061,7 +2128,8 @@ export async function runPageSpeed(
     mobilePerformanceScore: score,
     samples,
     spread,
-    sampleCount: samples.length
+    sampleCount: samples.length,
+    ...(failures.length > 0 ? { failures } : {})
   };
 }
 
@@ -2936,7 +3004,25 @@ export const googlePageSpeedAdapter: PageSpeedAdapter = async ({ url, apiKey }) 
 
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error("PageSpeed request failed");
+    let googleMessage = "";
+    try {
+      const body = (await response.json()) as {
+        error?: { message?: string; status?: string };
+      };
+      googleMessage = [body.error?.status, body.error?.message]
+        .filter((part): part is string => typeof part === "string" && part.length > 0)
+        .join(": ");
+    } catch {
+      // Non-JSON body: fall back to the status alone.
+    }
+    const safe = scrubPagespeedMessage(
+      googleMessage.split(apiKey).join("[REDACTED]")
+    );
+    throw new PageSpeedError(
+      `PageSpeed HTTP ${response.status}: ${safe}`.trim(),
+      "http",
+      response.status
+    );
   }
 
   const payload = (await response.json()) as {
@@ -2951,7 +3037,10 @@ export const googlePageSpeedAdapter: PageSpeedAdapter = async ({ url, apiKey }) 
   const score = payload.lighthouseResult?.categories?.performance?.score;
 
   if (typeof score !== "number") {
-    throw new Error("PageSpeed response did not include a performance score");
+    throw new PageSpeedError(
+      "PageSpeed response did not include a performance score",
+      "invalid-response"
+    );
   }
 
   const mobilePerformanceScore = Math.round(score * 100);

@@ -4,6 +4,7 @@ import {
   crawlWebsite,
   extractSignals,
   InsufficientEvidenceError,
+  runPageSpeed,
   type FetchAdapter
 } from "./index.js";
 
@@ -88,6 +89,9 @@ function mockedSite(
 
   return { fetchAdapter, calls };
 }
+
+const TIMEOUT_EXPLANATION =
+  "PageSpeed did not answer within our 0 s timeout on any of 3 attempts, so the report does not make a performance claim from that API.";
 
 describe("Phase 1 assessment pipeline", () => {
   it("respects robots.txt and does not crawl outside the submitted domain", async () => {
@@ -927,20 +931,23 @@ describe("Phase 1 assessment pipeline", () => {
           }),
         requestTimeoutMs: 5,
         pageSpeedTimeoutMs: 5,
+        pageSpeedStaggerMs: 0,
         crawlDelayMs: 0
       }
     );
 
-    expect(report.crawlMetadata.pagespeed).toEqual({
-      status: "failed",
-      explanation:
-        "PageSpeed could not be reached on any of 3 attempts, so the report does not make a performance claim from that API."
-    });
+    expect(report.crawlMetadata.pagespeed.status).toBe("failed");
+    expect(report.crawlMetadata.pagespeed.explanation).toBe(TIMEOUT_EXPLANATION);
+    expect(report.crawlMetadata.pagespeed.failures?.map((f) => f.kind)).toEqual([
+      "timeout",
+      "timeout",
+      "timeout"
+    ]);
     const performanceCategory = report.categories.find(
       (category) => category.category === "performance"
     );
     expect(performanceCategory?.evidenceMissing).toContain(
-      "PageSpeed could not be reached on any of 3 attempts, so the report does not make a performance claim from that API."
+      TIMEOUT_EXPLANATION
     );
     // Zero samples must never silently score zero as if it were measured —
     // the category is marked unavailable (this codebase's could_not_assess
@@ -972,6 +979,7 @@ describe("Phase 1 assessment pipeline", () => {
           }),
         requestTimeoutMs: 5,
         pageSpeedTimeoutMs: 100,
+        pageSpeedStaggerMs: 0,
         crawlDelayMs: 0
       }
     );
@@ -1022,6 +1030,7 @@ describe("Phase 1 assessment pipeline", () => {
             );
           });
         },
+        pageSpeedStaggerMs: 0,
         crawlDelayMs: 0
       }
     );
@@ -1071,6 +1080,7 @@ describe("Phase 1 assessment pipeline", () => {
             summary: `PageSpeed reported a mobile performance score of ${score}/100.`
           };
         },
+        pageSpeedStaggerMs: 0,
         crawlDelayMs: 0
       }
     );
@@ -1083,7 +1093,14 @@ describe("Phase 1 assessment pipeline", () => {
       mobilePerformanceScore: 85,
       samples: [80, 90],
       spread: 10,
-      sampleCount: 2
+      sampleCount: 2,
+      failures: [
+        {
+          attempt: 2,
+          kind: "network",
+          message: "simulated PageSpeed rate limit"
+        }
+      ]
     });
     const performanceCategory = report.categories.find(
       (category) => category.category === "performance"
@@ -1114,6 +1131,7 @@ describe("Phase 1 assessment pipeline", () => {
             summary: `PageSpeed reported a mobile performance score of ${score}/100.`
           };
         },
+        pageSpeedStaggerMs: 0,
         crawlDelayMs: 0
       }
     );
@@ -1150,6 +1168,7 @@ describe("Phase 1 assessment pipeline", () => {
           mobilePerformanceScore: 47,
           summary: "PageSpeed reported a mobile performance score of 47/100."
         }),
+        pageSpeedStaggerMs: 0,
         crawlDelayMs: 0
       }
     );
@@ -1821,5 +1840,72 @@ describe("report.contact.phoneNumbers (coordinator review 2026-09-28, handoff 11
     );
 
     expect(report.contact.phoneNumbers).toEqual([]);
+  });
+});
+
+describe("PageSpeed failure reasons (handoff 13)", () => {
+  const base = {
+    pagespeedApiKey: "test-key",
+    requestTimeoutMs: 5,
+    pageSpeedTimeoutMs: 50,
+    pageSpeedStaggerMs: 0
+  };
+  const httpError = (status: number, message: string) =>
+    Object.assign(new Error(`PageSpeed HTTP ${status}: ${message}`), {
+      kind: "http",
+      httpStatus: status
+    });
+
+  it("records HTTP 429 for every attempt and names it in the explanation", async () => {
+    const result = await runPageSpeed("https://example.com/", {
+      ...base,
+      pageSpeedAdapter: async () => {
+        throw httpError(429, "RESOURCE_EXHAUSTED: Quota exceeded");
+      }
+    });
+    expect(result?.status).toBe("failed");
+    expect(result?.failures).toHaveLength(3);
+    expect(result?.explanation).toContain("refused");
+    expect(result?.explanation).toContain("429");
+  });
+
+  it("records timeouts and says PageSpeed did not answer", async () => {
+    const result = await runPageSpeed("https://example.com/", {
+      ...base,
+      pageSpeedTimeoutMs: 5,
+      pageSpeedAdapter: () => new Promise(() => undefined)
+    });
+    expect(result?.failures?.map((f) => f.kind)).toEqual([
+      "timeout",
+      "timeout",
+      "timeout"
+    ]);
+    expect(result?.explanation).toContain("did not answer within");
+  });
+
+  it("keeps success with 2 samples and records the one failure", async () => {
+    let call = 0;
+    const result = await runPageSpeed("https://example.com/", {
+      ...base,
+      pageSpeedAdapter: async () => {
+        call += 1;
+        if (call === 3) throw httpError(500, "backend error");
+        return { mobilePerformanceScore: 80, summary: "ok" };
+      }
+    });
+    expect(result?.status).toBe("success");
+    expect(result?.samples).toHaveLength(2);
+    expect(result?.failures).toHaveLength(1);
+    expect(result?.failures?.[0]?.httpStatus).toBe(500);
+  });
+
+  it("never leaks a key= value into the metadata", async () => {
+    const result = await runPageSpeed("https://example.com/", {
+      ...base,
+      pageSpeedAdapter: async () => {
+        throw new Error("fetch failed https://x/?url=a&key=SECRET123");
+      }
+    });
+    expect(JSON.stringify(result)).not.toContain("SECRET123");
   });
 });

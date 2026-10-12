@@ -29,7 +29,7 @@ describe("Phase 0 shared foundation", () => {
       maxDepth: 2,
       crawlDelayMs: 1000,
       requestTimeoutMs: 10000,
-      pageSpeedTimeoutMs: 45000,
+      pageSpeedTimeoutMs: 120000,
       maxResponseBytes: 2000000,
       maxConcurrency: 1,
       maxScanHistory: 50
