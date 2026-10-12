@@ -10,7 +10,7 @@ export const crawlerPolicy = {
   maxDepth: 2,
   crawlDelayMs: 1000,
   requestTimeoutMs: 10000,
-  pageSpeedTimeoutMs: 45000,
+  pageSpeedTimeoutMs: 120000,
   // Matches Googlebot's documented 2 MB cutoff for HTML (uncompressed); links past the cap are never seen.
   maxResponseBytes: 2000000,
   maxConcurrency: 1,
@@ -368,6 +368,13 @@ export type CrawlMetadata = {
     spread?: number;
     /** How many of the (up to 3) attempted samples actually succeeded. */
     sampleCount?: number;
+    /** Why each rejected attempt failed (attempt is 1-based). */
+    failures?: Array<{
+      attempt: number;
+      kind: "timeout" | "http" | "invalid-response" | "network";
+      httpStatus?: number;
+      message: string;
+    }>;
   };
 };
 
