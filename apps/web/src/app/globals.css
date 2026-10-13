@@ -526,3 +526,106 @@ ul {
     width: 100%;
   }
 }
+
+/* Clients + Apple listing sheet (H20) */
+.client-form h2,
+.sheet-step h2 {
+  font-size: 1.15rem;
+  margin: 24px 0 12px;
+}
+
+.client-field {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.client-field span {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.client-field small,
+.sheet-help,
+.sheet-warning {
+  color: #54615f;
+  display: block;
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+
+.sheet-warning {
+  color: #9d2f24;
+}
+
+.client-field select,
+.hours-row select {
+  border: 1px solid #aab7b1;
+  border-radius: 6px;
+  font: inherit;
+  min-height: 46px;
+  padding: 0 12px;
+  width: 100%;
+}
+
+.hours-row {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 110px 1fr 1fr 1fr;
+  margin-bottom: 8px;
+}
+
+.sheet-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.sheet-table th,
+.sheet-table td {
+  border-bottom: 1px solid #dfe5e1;
+  padding: 10px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.sheet-table th {
+  width: 28%;
+}
+
+.missing-field {
+  background: #fdf1e3;
+  outline: 2px solid #d9822b;
+}
+
+.copy-button {
+  background: #eef2ef;
+  color: #245f4f;
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.sheet-banner {
+  border: 1px solid #c8d0c9;
+  border-radius: 8px;
+  margin: 0 0 24px;
+  padding: 16px;
+}
+
+.sheet-banner-warn {
+  background: #fdf1e3;
+  border-color: #d9822b;
+}
+
+.status-chip {
+  background: #eef2ef;
+  border-radius: 999px;
+  color: #245f4f;
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 2px 10px;
+}
+
+.prefill-form {
+  margin: 0 0 24px;
+}
