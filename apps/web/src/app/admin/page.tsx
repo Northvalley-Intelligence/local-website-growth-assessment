@@ -10,6 +10,9 @@ export default async function AdminPage() {
         <Link className="text-link" href="/">
           New assessment
         </Link>
+        <Link className="text-link" href="/admin/clients">
+          Clients
+        </Link>
         <p className="eyebrow">Admin</p>
         <h1>Scan History</h1>
         {scans.length === 0 ? (
